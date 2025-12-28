@@ -13,45 +13,41 @@ function getBase(role) {
     consumer: process.env.FF_CONSUMER_BASE,
   }[r];
 
-  if (!base) throw new Error(`Unknown role '${role}'`);
-  return base.replace(/\/+$/, "");
-}
-
-function getKey(role) {
-  const r = normalizeRole(role);
-  const key = {
-    producer: process.env.PRODUCER_ADDR,
-    reseller: process.env.RESELLER_ADDR,
-    consumer: process.env.CONSUMER_ADDR,
-  }[r];
-
-  // Se non è settata, lasciamo null (FireFly userà il default del nodo)
-  return key ? String(key).trim() : null;
+  if (!base) throw new Error(`Unknown role '${role}' (missing FF_*_BASE?)`);
+  return String(base).replace(/\/$/, "");
 }
 
 /**
- * INVOKE (tx on-chain): serve la key, altrimenti FireFly firma col default del nodo.
+ * INVOKE (tx): POST /apis/{api}/invoke/{method}
+ * payload: { input, key? }
  */
-export async function ffInvoke(role, apiName, method, input = {}) {
+export async function ffInvoke(role, apiName, method, input = {}, key = undefined) {
   const base = getBase(role);
   const url = `${base}/apis/${apiName}/invoke/${method}`;
 
   const payload = { input };
+  if (key !== undefined && key !== null && String(key) !== "") payload.key = String(key);
 
-  const key = getKey(role);
-  if (key) payload.key = key;
+  const { data } = await axios.post(url, payload, {
+    headers: { "Content-Type": "application/json" },
+  });
 
-  const { data } = await axios.post(url, payload);
   return data;
 }
 
 /**
- * QUERY (read-only): la key di solito non serve.
+ * QUERY (read-only): POST /apis/{api}/query/{method}
+ * payload: { input }
  */
 export async function ffQuery(role, apiName, method, input = {}) {
   const base = getBase(role);
   const url = `${base}/apis/${apiName}/query/${method}`;
 
-  const { data } = await axios.post(url, { input });
+  const { data } = await axios.post(
+    url,
+    { input },
+    { headers: { "Content-Type": "application/json" } }
+  );
+
   return data;
 }

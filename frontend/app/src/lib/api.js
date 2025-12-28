@@ -1,12 +1,12 @@
 // frontend/app/src/lib/api.js
-import { getToken } from "./auth";
+import { getToken, logout } from "./auth";
 
-const BASE = "http://localhost:3001";
+const BASE = (import.meta.env.VITE_BACKEND_BASE || "http://localhost:3001").replace(/\/$/, "");
 
 function buildAuthHeader() {
   const t = getToken();
   if (!t) return null;
-  const cleanToken = String(t).replace(/\s+/g, "");
+  const cleanToken = String(t).trim();
   if (!cleanToken) return null;
   return `Bearer ${cleanToken}`;
 }
@@ -18,6 +18,12 @@ async function parseResponse(res) {
     data = JSON.parse(text);
   } catch {
     data = text;
+  }
+
+  if (res.status === 401) {
+    // token scaduto/invalid -> logout pulito
+    logout();
+    throw new Error("Sessione scaduta: rifai login.");
   }
 
   if (!res.ok) {

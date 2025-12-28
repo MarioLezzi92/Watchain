@@ -15,7 +15,6 @@ export default function App() {
   const role = useMemo(() => getStored("role").trim().toLowerCase(), [address]);
 
   const handleLogout = () => {
-    // pulizia minima
     localStorage.removeItem("address");
     localStorage.removeItem("role");
     localStorage.removeItem("token");
@@ -35,6 +34,5 @@ export default function App() {
     return <Reseller address={address} onLogout={handleLogout} />;
   }
 
-  // default consumer
   return <Consumer address={address} onLogout={handleLogout} />;
 }

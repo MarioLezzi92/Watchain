@@ -1,49 +1,42 @@
 // backend/src/routes.js
 import express from "express";
-import { requireAuth } from "./auth.js";
+import { requireAuth } from "./jwt.js";
 import { buildInventory } from "./inventory.js";
-import {
-  getActiveListings,
-  listPrimary,
-  listSecondary,
-  buy,
-  certify,
-} from "./market.js";
+import { approveLux } from "./market.js";
+import { getActiveListings, listPrimary, listSecondary, buy, certify } from "./market.js";
 
 const router = express.Router();
+
+// sanity
+router.get("/me", requireAuth, (req, res) => {
+  res.json({ address: req.user?.address, role: req.user?.role });
+});
 
 // INVENTORY
 router.get("/inventory", requireAuth, async (req, res) => {
   try {
-    const address = req.user?.sub;
     const role = req.user?.role;
-    const inv = await buildInventory(role, address);
-    res.json(inv);
+    const address = req.user?.address;
+    const out = await buildInventory(role, address);
+    res.json(out);
   } catch (err) {
     console.error("INVENTORY FAILED:", err.response?.data || err.message);
-    res.status(500).json({ error: "inventory failed" });
+    res.status(400).json({ error: err.response?.data || err.message });
   }
 });
 
-// MARKET LISTINGS SEEDED FROM EVENTS
+// MARKET: listings
 router.get("/market/listings", requireAuth, async (req, res) => {
   try {
-    const role = req.user?.role;
-    const listings = await getActiveListings();
-
-    // consumer vede solo SECONDARY (per UX, comunque lo smart contract impedisce altro)
-    if (String(role || "").toLowerCase() === "consumer") {
-      return res.json(listings.filter((l) => l.saleType === "SECONDARY"));
-    }
-
-    res.json(listings);
+    const out = await getActiveListings();
+    res.json(out);
   } catch (err) {
-    console.error("MARKET LISTINGS FAILED:", err.response?.data || err.message);
-    res.status(500).json({ error: "market listings failed" });
+    console.error("LISTINGS FAILED:", err.response?.data || err.message);
+    res.status(400).json({ error: err.response?.data || err.message });
   }
 });
 
-// PRODUCER: list PRIMARY
+// PRODUCER: list primary
 router.post("/market/listPrimary", requireAuth, async (req, res) => {
   try {
     const role = req.user?.role;
@@ -51,12 +44,12 @@ router.post("/market/listPrimary", requireAuth, async (req, res) => {
     const out = await listPrimary(role, tokenId, price);
     res.json(out);
   } catch (err) {
-    console.error("LIST PRIMARY FAILED:", err.response?.data || err.message);
+    console.error("LIST_PRIMARY FAILED:", err.response?.data || err.message);
     res.status(400).json({ error: err.response?.data || err.message });
   }
 });
 
-// RESELLER: list SECONDARY
+// RESELLER: list secondary
 router.post("/market/listSecondary", requireAuth, async (req, res) => {
   try {
     const role = req.user?.role;
@@ -64,12 +57,12 @@ router.post("/market/listSecondary", requireAuth, async (req, res) => {
     const out = await listSecondary(role, tokenId, price);
     res.json(out);
   } catch (err) {
-    console.error("LIST SECONDARY FAILED:", err.response?.data || err.message);
+    console.error("LIST_SECONDARY FAILED:", err.response?.data || err.message);
     res.status(400).json({ error: err.response?.data || err.message });
   }
 });
 
-// RESELLER/CONSUMER: buy
+// BUY (reseller/consumer)
 router.post("/market/buy", requireAuth, async (req, res) => {
   try {
     const role = req.user?.role;
@@ -94,5 +87,17 @@ router.post("/nft/certify", requireAuth, async (req, res) => {
     res.status(400).json({ error: err.response?.data || err.message });
   }
 });
+
+router.post("/coin/approve", requireAuth, async (req, res) => {
+  try {
+    const role = req.user?.role;
+    const { spender, amount } = req.body || {};
+    const out = await approveLux(role, spender, amount);
+    res.json(out);
+  } catch (err) {
+    res.status(400).json({ error: err.response?.data || err.message });
+  }
+});
+
 
 export default router;

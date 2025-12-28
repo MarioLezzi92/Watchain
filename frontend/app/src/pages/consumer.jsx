@@ -12,6 +12,11 @@ export default function Consumer({ address, onLogout }) {
   const [listError, setListError] = useState("");
   const [listings, setListings] = useState([]);
 
+  // Serve per fare approve(spender=WatchMarket, value=price) prima del buy
+  const WATCHMARKET_ADDRESS = String(import.meta.env.VITE_WATCHMARKET_ADDRESS || "")
+    .trim()
+    .replace(/["';\s]/g, "");
+
   const me = useMemo(() => address || getAddress() || "-", [address]);
 
   const logout = () => {
@@ -52,12 +57,35 @@ export default function Consumer({ address, onLogout }) {
     }
   };
 
-  const doBuy = async (tokenId) => {
+  const ensureApprove = async (amountWei) => {
+    const s = (WATCHMARKET_ADDRESS || "").trim();
+
+    if (!/^0x[a-fA-F0-9]{40}$/.test(s)) {
+      throw new Error(
+        `VITE_WATCHMARKET_ADDRESS non valido: '${WATCHMARKET_ADDRESS}'. Deve essere un address 0x... da 40 hex.`
+      );
+    }
+
+    const amt = String(amountWei ?? "").trim();
+    if (!/^\d+$/.test(amt)) {
+      throw new Error(`Prezzo non valido per approve: '${amountWei}'`);
+    }
+
+    // Backend: /coin/approve -> FireFly LuxuryCoin.approve(spender, value)
+    await apiPost("/coin/approve", { spender: s, amount: amt });
+  };
+
+  const doBuy = async (listing) => {
     try {
-      await apiPost("/market/buy", { tokenId: String(tokenId) });
+      // 1) approve ERC20 per il prezzo del listing
+      await ensureApprove(String(listing.price));
+
+      // 2) buy del market
+      await apiPost("/market/buy", { tokenId: String(listing.tokenId) });
+
       await refreshListings();
       await refreshInventory();
-      alert(`Acquisto avviato per tokenId ${tokenId} (controlla Events/Inventory).`);
+      alert(`Acquisto avviato per tokenId ${listing.tokenId} (controlla Events/Inventory).`);
     } catch (e) {
       alert(String(e.message || e));
     }
@@ -129,6 +157,13 @@ export default function Consumer({ address, onLogout }) {
       <div>
         <h2 style={{ marginBottom: 8 }}>Market listings (SECONDARY)</h2>
 
+        {WATCHMARKET_ADDRESS ? null : (
+          <div style={{ color: "#ffcc00", marginBottom: 12 }}>
+            Nota: manca <b>VITE_WATCHMARKET_ADDRESS</b> nel frontend .env → l&apos;acquisto fallirà
+            perché serve approve prima di buy.
+          </div>
+        )}
+
         {listError ? <div style={{ color: "#ff4d4f", marginBottom: 12 }}>{listError}</div> : null}
 
         <button
@@ -157,7 +192,7 @@ export default function Consumer({ address, onLogout }) {
                   <b>price:</b> {String(l.price ?? "-")} | <b>saleType:</b> {String(l.saleType ?? "-")}
                 </div>
                 <button
-                  onClick={() => doBuy(l.tokenId)}
+                  onClick={() => doBuy(l)}
                   style={{
                     marginTop: 8,
                     background: "#111",

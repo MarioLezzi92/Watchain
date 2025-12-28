@@ -1,7 +1,7 @@
 // frontend/app/src/pages/Reseller.jsx
 import React, { useMemo, useState } from "react";
 import { apiGet, apiPost } from "../lib/api";
-import { getAddress } from "../lib/auth";
+import { getAddress, logout as authLogout } from "../lib/auth";
 
 export default function Reseller({ address, onLogout }) {
   const [invLoading, setInvLoading] = useState(false);
@@ -14,12 +14,14 @@ export default function Reseller({ address, onLogout }) {
 
   const [secondaryPriceLux, setSecondaryPriceLux] = useState("20");
 
+  // WatchMarket address: serve per approve (spender)
+  const WATCHMARKET_ADDRESS =
+    (import.meta.env.VITE_WATCHMARKET_ADDRESS || "").trim();
+
   const me = useMemo(() => address || getAddress() || "-", [address]);
 
   const logout = () => {
-    localStorage.removeItem("token");
-    localStorage.removeItem("address");
-    localStorage.removeItem("role");
+    authLogout();
     if (typeof onLogout === "function") onLogout();
     else window.location.reload();
   };
@@ -55,14 +57,40 @@ export default function Reseller({ address, onLogout }) {
   const toWei18 = (lux) => {
     const n = String(lux || "").trim();
     if (!n) return "0";
-    if (n.includes(".")) throw new Error("Inserisci un numero intero di LUX (es. 20), niente decimali.");
+    if (n.includes(".")) {
+      throw new Error("Inserisci un numero intero di LUX (es. 20), niente decimali.");
+    }
     return `${n}000000000000000000`;
   };
 
-  const doBuy = async (tokenId) => {
+  // Approve ERC20 (LuxuryCoin) -> spender WatchMarket
+  // amount deve essere in wei (18 decimali) es: 10 LUX => 10000000000000000000
+  const ensureApprove = async (amountWei) => {
+    const s = (WATCHMARKET_ADDRESS || "").trim();
+
+    if (!/^0x[a-fA-F0-9]{40}$/.test(s)) {
+      throw new Error(
+        `VITE_WATCHMARKET_ADDRESS non valido: '${WATCHMARKET_ADDRESS}'. Deve essere un address 0x... da 40 hex.`
+      );
+    }
+
+    const amt = String(amountWei ?? "").trim();
+    if (!/^\d+$/.test(amt)) {
+      throw new Error(`Prezzo non valido per approve: '${amountWei}'`);
+    }
+
+    await apiPost("/coin/approve", { spender: s, amount: amt });
+  };
+
+  const doBuyPrimary = async (listing) => {
     try {
-      await apiPost("/market/buy", { tokenId: String(tokenId) });
-      alert(`Acquisto avviato per tokenId ${tokenId}.`);
+      // 1) approve spender=WatchMarket amount=price
+      await ensureApprove(String(listing.price));
+
+      // 2) buy
+      await apiPost("/market/buy", { tokenId: String(listing.tokenId) });
+
+      alert(`Acquisto avviato per tokenId ${listing.tokenId}.`);
       await refreshListings();
       await refreshInventory();
     } catch (e) {
@@ -91,8 +119,12 @@ export default function Reseller({ address, onLogout }) {
     }
   };
 
-  const primaryListings = listings.filter((x) => String(x.saleType).toUpperCase() === "PRIMARY");
-  const secondaryListings = listings.filter((x) => String(x.saleType).toUpperCase() === "SECONDARY");
+  const primaryListings = listings.filter(
+    (x) => String(x.saleType).toUpperCase() === "PRIMARY"
+  );
+  const secondaryListings = listings.filter(
+    (x) => String(x.saleType).toUpperCase() === "SECONDARY"
+  );
 
   return (
     <div style={{ padding: 32, color: "#fff" }}>
@@ -124,6 +156,13 @@ export default function Reseller({ address, onLogout }) {
       <div style={{ marginTop: 34 }}>
         <h2 style={{ marginBottom: 8 }}>Market PRIMARY (compra dal Producer)</h2>
 
+        {WATCHMARKET_ADDRESS ? null : (
+          <div style={{ color: "#ffcc00", marginBottom: 12 }}>
+            Nota: manca <b>VITE_WATCHMARKET_ADDRESS</b> nel frontend .env → l&apos;acquisto fallirà
+            perché serve approve prima di buy.
+          </div>
+        )}
+
         {listError ? <div style={{ color: "#ff4d4f", marginBottom: 12 }}>{listError}</div> : null}
 
         <button
@@ -151,8 +190,9 @@ export default function Reseller({ address, onLogout }) {
                   <b>tokenId:</b> {String(l.tokenId)} | <b>seller:</b> {String(l.seller)} |{" "}
                   <b>price:</b> {String(l.price)} | <b>saleType:</b> {String(l.saleType)}
                 </div>
+
                 <button
-                  onClick={() => doBuy(l.tokenId)}
+                  onClick={() => doBuyPrimary(l)}
                   style={{
                     marginTop: 8,
                     background: "#111",
@@ -219,7 +259,8 @@ export default function Reseller({ address, onLogout }) {
             inventory.map((it, idx) => (
               <li key={`${it.tokenId ?? idx}-${idx}`} style={{ marginBottom: 14 }}>
                 <div>
-                  <b>tokenId:</b> {String(it.tokenId)} | <b>certified:</b> <b>{String(it.certified)}</b>
+                  <b>tokenId:</b> {String(it.tokenId)} | <b>certified:</b>{" "}
+                  <b>{String(it.certified)}</b>
                 </div>
 
                 <div style={{ display: "flex", gap: 10, marginTop: 8 }}>

@@ -3,9 +3,9 @@ export function tokenArg(tokenId) {
   const s = String(tokenId).trim();
 
   return [
-    { key: s },                 // FireFly "key"
-    { "": s },                  // param anonimo visto in alcuni casi
-    { tokenId: Number(tokenId) }, // tokenId numerico (fallback)
-    { tokenId: s },             // tokenId string
+    { key: s }, // FireFly "key" (spesso coincide con tokenId string)
+    { "": s }, // param anonimo (alcune config lo vogliono così)
+    { tokenId: Number(tokenId) }, // tokenId numerico
+    { tokenId: s }, // tokenId string
   ];
 }

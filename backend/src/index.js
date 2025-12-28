@@ -1,3 +1,4 @@
+// backend/src/index.js
 import dotenv from "dotenv";
 dotenv.config();
 
@@ -15,6 +16,7 @@ app.use(
     credentials: true,
   })
 );
+
 app.use(express.json());
 
 app.get("/", (req, res) => res.send("Backend OK"));
@@ -24,7 +26,8 @@ app.post("/auth/login", login);
 
 app.use(routes);
 
-app.listen(process.env.PORT || 3001, () => {
+const port = Number(process.env.PORT || 3001);
+app.listen(port, () => {
   console.log(`JWT_SECRET present? ${!!process.env.JWT_SECRET}`);
-  console.log(`Backend listening on http://localhost:${process.env.PORT || 3001}`);
+  console.log(`Backend listening on http://localhost:${port}`);
 });
