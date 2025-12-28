@@ -3,6 +3,24 @@ import React, { useMemo, useState } from "react";
 import { apiGet, apiPost } from "../lib/api";
 import { getAddress } from "../lib/auth";
 
+function fromWei18(wei) {
+  const s = String(wei ?? "").trim();
+  if (!/^\d+$/.test(s)) return String(wei ?? "-");
+  if (s === "0") return "0";
+  if (s.length <= 18) return `0.${s.padStart(18, "0")}`.replace(/\.?0+$/, "");
+  const head = s.slice(0, -18);
+  const tail = s.slice(-18);
+  const tailTrim = tail.replace(/0+$/, "");
+  return tailTrim ? `${head}.${tailTrim}` : head;
+}
+
+function toWei18(lux) {
+  const n = String(lux || "").trim();
+  if (!n) return "0";
+  if (n.includes(".")) throw new Error("Inserisci un numero intero di LUX (es. 10), niente decimali.");
+  return `${n}000000000000000000`;
+}
+
 export default function Producer({ address, onLogout }) {
   const [invLoading, setInvLoading] = useState(false);
   const [invError, setInvError] = useState("");
@@ -14,6 +32,9 @@ export default function Producer({ address, onLogout }) {
 
   const [tokenId, setTokenId] = useState("");
   const [priceLux, setPriceLux] = useState("10");
+
+  const [status, setStatus] = useState({ type: "", text: "" });
+  const [busy, setBusy] = useState(false);
 
   const me = useMemo(() => address || getAddress() || "-", [address]);
 
@@ -53,27 +74,29 @@ export default function Producer({ address, onLogout }) {
     }
   };
 
-  const toWei18 = (lux) => {
-    // UX semplice: supporta numeri interi (10 -> 10e18)
-    const n = String(lux || "").trim();
-    if (!n) return "0";
-    if (n.includes(".")) {
-      // evita casino: niente decimali
-      throw new Error("Inserisci un numero intero di LUX (es. 10), niente decimali.");
-    }
-    return `${n}000000000000000000`;
-  };
-
   const doListPrimary = async () => {
+    setBusy(true);
+    setStatus({ type: "info", text: "Creazione listing PRIMARY…" });
     try {
+      const tid = String(tokenId || "").trim();
+      if (!/^\d+$/.test(tid)) throw new Error("tokenId non valido");
+
       const p = toWei18(priceLux);
-      await apiPost("/market/listPrimary", { tokenId: String(tokenId), price: p });
-      alert("Listing PRIMARY creato (controlla Market listings).");
+      await apiPost("/market/listPrimary", { tokenId: tid, price: p });
+
+      setStatus({ type: "ok", text: `Listing PRIMARY creato per tokenId ${tid}.` });
       await refreshListings();
     } catch (e) {
-      alert(String(e.message || e));
+      setStatus({ type: "err", text: String(e.message || e) });
+    } finally {
+      setBusy(false);
     }
   };
+
+  const primaryListings = listings.filter((x) => String(x.saleType).toUpperCase() === "PRIMARY");
+
+  const statusBg =
+    status.type === "ok" ? "#103b1f" : status.type === "err" ? "#3b1010" : status.type === "info" ? "#10203b" : "transparent";
 
   return (
     <div style={{ padding: 32, color: "#fff" }}>
@@ -102,6 +125,21 @@ export default function Producer({ address, onLogout }) {
         </button>
       </div>
 
+      {status.text ? (
+        <div
+          style={{
+            marginTop: 18,
+            background: statusBg,
+            border: "1px solid #222",
+            borderRadius: 12,
+            padding: "10px 12px",
+            opacity: 0.95,
+          }}
+        >
+          {status.text}
+        </div>
+      ) : null}
+
       <div style={{ marginTop: 34 }}>
         <h2 style={{ marginBottom: 8 }}>Inventory (live)</h2>
 
@@ -109,20 +147,20 @@ export default function Producer({ address, onLogout }) {
 
         <button
           onClick={refreshInventory}
-          disabled={invLoading}
+          disabled={invLoading || busy}
           style={{
             background: "#111",
             border: "1px solid #222",
             color: "white",
             padding: "12px 18px",
             borderRadius: 10,
-            cursor: invLoading ? "not-allowed" : "pointer",
+            cursor: invLoading || busy ? "not-allowed" : "pointer",
           }}
         >
           {invLoading ? "Loading..." : "Refresh"}
         </button>
 
-        <ul style={{ marginTop: 16, opacity: 0.9 }}>
+        <ul style={{ marginTop: 16, opacity: 0.95 }}>
           {inventory.length === 0 ? (
             <li>Nessun NFT in inventory (o non hai fatto refresh).</li>
           ) : (
@@ -142,89 +180,83 @@ export default function Producer({ address, onLogout }) {
         <h2 style={{ marginBottom: 8 }}>Crea listing PRIMARY (Producer → Reseller)</h2>
 
         <div style={{ display: "flex", gap: 12, alignItems: "center", marginTop: 10 }}>
-          <div>
-            <div style={{ fontSize: 12, opacity: 0.8 }}>tokenId</div>
-            <input
-              value={tokenId}
-              onChange={(e) => setTokenId(e.target.value)}
-              placeholder="es. 3"
-              style={{
-                width: 140,
-                padding: 10,
-                borderRadius: 10,
-                border: "1px solid #222",
-                background: "#111",
-                color: "#fff",
-              }}
-            />
-          </div>
+          <input
+            value={tokenId}
+            onChange={(e) => setTokenId(e.target.value)}
+            placeholder="tokenId (es. 4)"
+            style={{
+              width: 220,
+              padding: 10,
+              borderRadius: 10,
+              border: "1px solid #222",
+              background: "#111",
+              color: "#fff",
+            }}
+          />
 
-          <div>
-            <div style={{ fontSize: 12, opacity: 0.8 }}>prezzo (LUX intero)</div>
-            <input
-              value={priceLux}
-              onChange={(e) => setPriceLux(e.target.value)}
-              placeholder="es. 10"
-              style={{
-                width: 160,
-                padding: 10,
-                borderRadius: 10,
-                border: "1px solid #222",
-                background: "#111",
-                color: "#fff",
-              }}
-            />
-          </div>
+          <input
+            value={priceLux}
+            onChange={(e) => setPriceLux(e.target.value)}
+            placeholder="prezzo LUX (es. 10)"
+            style={{
+              width: 220,
+              padding: 10,
+              borderRadius: 10,
+              border: "1px solid #222",
+              background: "#111",
+              color: "#fff",
+            }}
+          />
 
           <button
             onClick={doListPrimary}
+            disabled={busy}
             style={{
-              marginTop: 18,
               background: "#111",
               border: "1px solid #fff",
               color: "white",
               padding: "12px 18px",
               borderRadius: 10,
-              cursor: "pointer",
+              cursor: busy ? "not-allowed" : "pointer",
             }}
           >
             Lista PRIMARY
           </button>
         </div>
+      </div>
 
-        <div style={{ marginTop: 18 }}>
-          <h2 style={{ marginBottom: 8 }}>Market listings (live)</h2>
+      <div style={{ marginTop: 26 }}>
+        <h2 style={{ marginBottom: 8 }}>Market listings (live)</h2>
 
-          {listError ? <div style={{ color: "#ff4d4f", marginBottom: 12 }}>{listError}</div> : null}
+        {listError ? <div style={{ color: "#ff4d4f", marginBottom: 12 }}>{listError}</div> : null}
 
-          <button
-            onClick={refreshListings}
-            disabled={listLoading}
-            style={{
-              background: "#111",
-              border: "1px solid #222",
-              color: "white",
-              padding: "12px 18px",
-              borderRadius: 10,
-              cursor: listLoading ? "not-allowed" : "pointer",
-            }}
-          >
-            {listLoading ? "Loading..." : "Refresh listings"}
-          </button>
+        <button
+          onClick={refreshListings}
+          disabled={listLoading || busy}
+          style={{
+            background: "#111",
+            border: "1px solid #fff",
+            color: "white",
+            padding: "12px 18px",
+            borderRadius: 10,
+            cursor: listLoading || busy ? "not-allowed" : "pointer",
+          }}
+        >
+          {listLoading ? "Loading..." : "Refresh listings"}
+        </button>
 
-          <ul style={{ marginTop: 16, opacity: 0.9 }}>
-            {listings.length === 0 ? (
-              <li>Nessun listing attivo.</li>
-            ) : (
-              listings.map((l, idx) => (
-                <li key={`${l.tokenId}-${idx}`} style={{ marginBottom: 10 }}>
-                  <b>tokenId:</b> {String(l.tokenId)} | <b>seller:</b> {String(l.seller)} |{" "}
-                  <b>price:</b> {String(l.price)} | <b>saleType:</b> {String(l.saleType)}
-                </li>
-              ))
-            )}
-          </ul>
-        </div>
+        <ul style={{ marginTop: 16, opacity: 0.95 }}>
+          {primaryListings.length === 0 ? (
+            <li>Nessun listing attivo.</li>
+          ) : (
+            primaryListings.map((l, idx) => (
+              <li key={`${l.tokenId}-${idx}`} style={{ marginBottom: 10 }}>
+                <b>tokenId:</b> {String(l.tokenId)} | <b>seller:</b> {String(l.seller)} |{" "}
+                <b>price:</b> <b>{fromWei18(l.price)} LUX</b> | <b>saleType:</b> {String(l.saleType)}
+              </li>
+            ))
+          )}
+        </ul>
       </div>
     </div>
   );

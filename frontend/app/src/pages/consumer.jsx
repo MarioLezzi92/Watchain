@@ -1,7 +1,18 @@
 // frontend/app/src/pages/Consumer.jsx
-import React, { useMemo, useState } from "react";
-import { apiGet, apiPost } from "../lib/api";
+import React, { useEffect, useMemo, useState } from "react";
+import { apiGet, apiPost, getConfig } from "../lib/api";
 import { getAddress } from "../lib/auth";
+
+function fromWei18(wei) {
+  const s = String(wei ?? "").trim();
+  if (!/^\d+$/.test(s)) return String(wei ?? "-");
+  if (s === "0") return "0";
+  if (s.length <= 18) return `0.${s.padStart(18, "0")}`.replace(/\.?0+$/, "");
+  const head = s.slice(0, -18);
+  const tail = s.slice(-18);
+  const tailTrim = tail.replace(/0+$/, "");
+  return tailTrim ? `${head}.${tailTrim}` : head;
+}
 
 export default function Consumer({ address, onLogout }) {
   const [invLoading, setInvLoading] = useState(false);
@@ -12,10 +23,15 @@ export default function Consumer({ address, onLogout }) {
   const [listError, setListError] = useState("");
   const [listings, setListings] = useState([]);
 
-  // Serve per fare approve(spender=WatchMarket, value=price) prima del buy
-  const WATCHMARKET_ADDRESS = String(import.meta.env.VITE_WATCHMARKET_ADDRESS || "")
-    .trim()
-    .replace(/["';\s]/g, "");
+  const [status, setStatus] = useState({ type: "", text: "" });
+  const [busy, setBusy] = useState(false);
+
+  const [cfg, setCfg] = useState({ watchMarketAddress: "" });
+
+  const [luxBalanceWei, setLuxBalanceWei] = useState("0");
+  const [luxAllowanceWei, setLuxAllowanceWei] = useState("0");
+
+  const [useApproveMax, setUseApproveMax] = useState(true);
 
   const me = useMemo(() => address || getAddress() || "-", [address]);
 
@@ -26,6 +42,17 @@ export default function Consumer({ address, onLogout }) {
     if (typeof onLogout === "function") onLogout();
     else window.location.reload();
   };
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const c = await getConfig();
+        setCfg({ watchMarketAddress: String(c.watchMarketAddress || "").trim() });
+      } catch {
+        setCfg({ watchMarketAddress: "" });
+      }
+    })();
+  }, []);
 
   const refreshInventory = async () => {
     setInvLoading(true);
@@ -47,7 +74,6 @@ export default function Consumer({ address, onLogout }) {
     try {
       const data = await apiGet("/market/listings");
       const arr = Array.isArray(data) ? data : [];
-      // safety: consumer deve vedere solo SECONDARY
       setListings(arr.filter((x) => String(x.saleType).toUpperCase() === "SECONDARY"));
     } catch (e) {
       setListings([]);
@@ -57,39 +83,58 @@ export default function Consumer({ address, onLogout }) {
     }
   };
 
-  const ensureApprove = async (amountWei) => {
-    const s = (WATCHMARKET_ADDRESS || "").trim();
+  const refreshCoinInfo = async () => {
+    try {
+      const b = await apiGet("/coin/balance");
+      setLuxBalanceWei(String(b?.balance ?? "0"));
+    } catch {
+      setLuxBalanceWei("0");
+    }
 
-    if (!/^0x[a-fA-F0-9]{40}$/.test(s)) {
-      throw new Error(
-        `VITE_WATCHMARKET_ADDRESS non valido: '${WATCHMARKET_ADDRESS}'. Deve essere un address 0x... da 40 hex.`
-      );
+    try {
+      const a = await apiGet("/coin/allowance");
+      setLuxAllowanceWei(String(a?.allowance ?? "0"));
+    } catch {
+      setLuxAllowanceWei("0");
+    }
+  };
+
+  const ensureApprove = async (amountWei) => {
+    const spender = String(cfg.watchMarketAddress || "").trim();
+    if (!/^0x[a-fA-F0-9]{40}$/.test(spender)) {
+      throw new Error(`WatchMarket address non valido da /config: '${spender}'`);
+    }
+
+    if (useApproveMax) {
+      await apiPost("/coin/approveMax", { spender });
+      return;
     }
 
     const amt = String(amountWei ?? "").trim();
-    if (!/^\d+$/.test(amt)) {
-      throw new Error(`Prezzo non valido per approve: '${amountWei}'`);
-    }
-
-    // Backend: /coin/approve -> FireFly LuxuryCoin.approve(spender, value)
-    await apiPost("/coin/approve", { spender: s, amount: amt });
+    if (!/^\d+$/.test(amt)) throw new Error(`Prezzo non valido: '${amountWei}'`);
+    await apiPost("/coin/approve", { spender, amount: amt });
   };
 
   const doBuy = async (listing) => {
+    setBusy(true);
+    setStatus({ type: "info", text: "Acquisto SECONDARY in corso: approve → buy…" });
     try {
-      // 1) approve ERC20 per il prezzo del listing
       await ensureApprove(String(listing.price));
-
-      // 2) buy del market
       await apiPost("/market/buy", { tokenId: String(listing.tokenId) });
 
+      setStatus({ type: "ok", text: `Acquisto avviato per tokenId ${listing.tokenId}.` });
       await refreshListings();
       await refreshInventory();
-      alert(`Acquisto avviato per tokenId ${listing.tokenId} (controlla Events/Inventory).`);
+      await refreshCoinInfo();
     } catch (e) {
-      alert(String(e.message || e));
+      setStatus({ type: "err", text: String(e.message || e) });
+    } finally {
+      setBusy(false);
     }
   };
+
+  const statusBg =
+    status.type === "ok" ? "#103b1f" : status.type === "err" ? "#3b1010" : status.type === "info" ? "#10203b" : "transparent";
 
   return (
     <div style={{ padding: 32, color: "#fff" }}>
@@ -99,6 +144,24 @@ export default function Consumer({ address, onLogout }) {
           <div style={{ marginTop: 10, opacity: 0.9 }}>
             <div>
               Logged as: <b>{me}</b>
+            </div>
+            <div style={{ marginTop: 6, fontSize: 13, opacity: 0.85 }}>
+              LUX balance: <b>{fromWei18(luxBalanceWei)}</b> | allowance→market: <b>{fromWei18(luxAllowanceWei)}</b>
+              <button
+                onClick={refreshCoinInfo}
+                disabled={busy}
+                style={{
+                  marginLeft: 10,
+                  background: "#111",
+                  border: "1px solid #222",
+                  color: "white",
+                  padding: "6px 10px",
+                  borderRadius: 10,
+                  cursor: busy ? "not-allowed" : "pointer",
+                }}
+              >
+                Refresh coin
+              </button>
             </div>
           </div>
         </div>
@@ -118,6 +181,33 @@ export default function Consumer({ address, onLogout }) {
         </button>
       </div>
 
+      {status.text ? (
+        <div
+          style={{
+            marginTop: 18,
+            background: statusBg,
+            border: "1px solid #222",
+            borderRadius: 12,
+            padding: "10px 12px",
+            opacity: 0.95,
+          }}
+        >
+          {status.text}
+        </div>
+      ) : null}
+
+      <div style={{ marginTop: 24, display: "flex", alignItems: "center", gap: 10 }}>
+        <input
+          type="checkbox"
+          checked={useApproveMax}
+          onChange={(e) => setUseApproveMax(e.target.checked)}
+          id="approveMaxC"
+        />
+        <label htmlFor="approveMaxC" style={{ opacity: 0.9 }}>
+          Usa approve infinito (consigliato)
+        </label>
+      </div>
+
       <div style={{ marginTop: 34 }}>
         <h2 style={{ marginBottom: 8 }}>Inventory (live)</h2>
 
@@ -125,20 +215,20 @@ export default function Consumer({ address, onLogout }) {
 
         <button
           onClick={refreshInventory}
-          disabled={invLoading}
+          disabled={invLoading || busy}
           style={{
             background: "#111",
             border: "1px solid #222",
             color: "white",
             padding: "12px 18px",
             borderRadius: 10,
-            cursor: invLoading ? "not-allowed" : "pointer",
+            cursor: invLoading || busy ? "not-allowed" : "pointer",
           }}
         >
           {invLoading ? "Loading..." : "Refresh"}
         </button>
 
-        <ul style={{ marginTop: 16, opacity: 0.9 }}>
+        <ul style={{ marginTop: 16, opacity: 0.95 }}>
           {inventory.length === 0 ? (
             <li>Nessun NFT in inventory (o non hai fatto refresh).</li>
           ) : (
@@ -157,31 +247,24 @@ export default function Consumer({ address, onLogout }) {
       <div>
         <h2 style={{ marginBottom: 8 }}>Market listings (SECONDARY)</h2>
 
-        {WATCHMARKET_ADDRESS ? null : (
-          <div style={{ color: "#ffcc00", marginBottom: 12 }}>
-            Nota: manca <b>VITE_WATCHMARKET_ADDRESS</b> nel frontend .env → l&apos;acquisto fallirà
-            perché serve approve prima di buy.
-          </div>
-        )}
-
         {listError ? <div style={{ color: "#ff4d4f", marginBottom: 12 }}>{listError}</div> : null}
 
         <button
           onClick={refreshListings}
-          disabled={listLoading}
+          disabled={listLoading || busy}
           style={{
             background: "#111",
             border: "1px solid #fff",
             color: "white",
             padding: "12px 18px",
             borderRadius: 10,
-            cursor: listLoading ? "not-allowed" : "pointer",
+            cursor: listLoading || busy ? "not-allowed" : "pointer",
           }}
         >
           {listLoading ? "Loading..." : "Refresh listings"}
         </button>
 
-        <ul style={{ marginTop: 16, opacity: 0.9 }}>
+        <ul style={{ marginTop: 16, opacity: 0.95 }}>
           {listings.length === 0 ? (
             <li>Nessun listing SECONDARY attivo.</li>
           ) : (
@@ -189,10 +272,11 @@ export default function Consumer({ address, onLogout }) {
               <li key={`${l.tokenId}-${idx}`} style={{ marginBottom: 10 }}>
                 <div>
                   <b>tokenId:</b> {String(l.tokenId ?? "-")} | <b>seller:</b> {String(l.seller ?? "-")} |{" "}
-                  <b>price:</b> {String(l.price ?? "-")} | <b>saleType:</b> {String(l.saleType ?? "-")}
+                  <b>price:</b> <b>{fromWei18(l.price)} LUX</b> | <b>saleType:</b> {String(l.saleType ?? "-")}
                 </div>
                 <button
                   onClick={() => doBuy(l)}
+                  disabled={busy}
                   style={{
                     marginTop: 8,
                     background: "#111",
@@ -200,7 +284,7 @@ export default function Consumer({ address, onLogout }) {
                     color: "white",
                     padding: "10px 14px",
                     borderRadius: 10,
-                    cursor: "pointer",
+                    cursor: busy ? "not-allowed" : "pointer",
                   }}
                 >
                   Compra

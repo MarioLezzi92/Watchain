@@ -1,12 +1,12 @@
 // frontend/app/src/lib/api.js
-import { getToken, logout } from "./auth";
+import { getToken } from "./auth";
 
-const BASE = (import.meta.env.VITE_BACKEND_BASE || "http://localhost:3001").replace(/\/$/, "");
+const BASE = (import.meta.env.VITE_BACKEND_BASE || "http://localhost:3001").replace(/\/+$/, "");
 
 function buildAuthHeader() {
   const t = getToken();
   if (!t) return null;
-  const cleanToken = String(t).trim();
+  const cleanToken = String(t).replace(/\s+/g, "");
   if (!cleanToken) return null;
   return `Bearer ${cleanToken}`;
 }
@@ -15,20 +15,20 @@ async function parseResponse(res) {
   const text = await res.text();
   let data;
   try {
-    data = JSON.parse(text);
+    data = text ? JSON.parse(text) : null;
   } catch {
     data = text;
   }
 
-  if (res.status === 401) {
-    // token scaduto/invalid -> logout pulito
-    logout();
-    throw new Error("Sessione scaduta: rifai login.");
-  }
-
   if (!res.ok) {
-    const msg = typeof data === "string" ? data : JSON.stringify(data, null, 2);
-    throw new Error(`HTTP ${res.status} - ${msg}`);
+    const msg =
+      (data && (data.error?.error || data.error || data.message)) ||
+      res.statusText ||
+      "Request failed";
+    const err = new Error(typeof msg === "string" ? msg : JSON.stringify(msg));
+    err.status = res.status;
+    err.data = data;
+    throw err;
   }
 
   return data;
@@ -39,7 +39,7 @@ export async function apiGet(path) {
   const headers = { Accept: "application/json" };
   if (auth) headers.Authorization = auth;
 
-  const res = await fetch(`${BASE}${path}`, { headers });
+  const res = await fetch(`${BASE}${path}`, { method: "GET", headers });
   return parseResponse(res);
 }
 
@@ -58,4 +58,15 @@ export async function apiPost(path, body = {}) {
   });
 
   return parseResponse(res);
+}
+
+// -------- Config cache --------
+let _configCache = null;
+
+export async function getConfig(force = false) {
+  if (_configCache && !force) return _configCache;
+  const res = await fetch(`${BASE}/config`, { method: "GET", headers: { Accept: "application/json" } });
+  const cfg = await parseResponse(res);
+  _configCache = cfg || {};
+  return _configCache;
 }

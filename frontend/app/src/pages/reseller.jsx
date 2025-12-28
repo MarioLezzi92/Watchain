@@ -1,7 +1,26 @@
 // frontend/app/src/pages/Reseller.jsx
-import React, { useMemo, useState } from "react";
-import { apiGet, apiPost } from "../lib/api";
-import { getAddress, logout as authLogout } from "../lib/auth";
+import React, { useEffect, useMemo, useState } from "react";
+import { apiGet, apiPost, getConfig } from "../lib/api";
+import { getAddress } from "../lib/auth";
+
+function fromWei18(wei) {
+  const s = String(wei ?? "").trim();
+  if (!/^\d+$/.test(s)) return String(wei ?? "-");
+  if (s === "0") return "0";
+
+  if (s.length <= 18) return `0.${s.padStart(18, "0")}`.replace(/\.?0+$/, "");
+  const head = s.slice(0, -18);
+  const tail = s.slice(-18);
+  const tailTrim = tail.replace(/0+$/, "");
+  return tailTrim ? `${head}.${tailTrim}` : head;
+}
+
+function toWei18(lux) {
+  const n = String(lux || "").trim();
+  if (!n) return "0";
+  if (n.includes(".")) throw new Error("Inserisci un numero intero di LUX (es. 20), niente decimali.");
+  return `${n}000000000000000000`;
+}
 
 export default function Reseller({ address, onLogout }) {
   const [invLoading, setInvLoading] = useState(false);
@@ -14,17 +33,36 @@ export default function Reseller({ address, onLogout }) {
 
   const [secondaryPriceLux, setSecondaryPriceLux] = useState("20");
 
-  // WatchMarket address: serve per approve (spender)
-  const WATCHMARKET_ADDRESS =
-    (import.meta.env.VITE_WATCHMARKET_ADDRESS || "").trim();
+  const [status, setStatus] = useState({ type: "", text: "" }); // type: info|ok|err
+  const [busy, setBusy] = useState(false);
+
+  const [cfg, setCfg] = useState({ watchMarketAddress: "" });
+
+  const [luxBalanceWei, setLuxBalanceWei] = useState("0");
+  const [luxAllowanceWei, setLuxAllowanceWei] = useState("0");
+
+  const [useApproveMax, setUseApproveMax] = useState(true);
 
   const me = useMemo(() => address || getAddress() || "-", [address]);
 
   const logout = () => {
-    authLogout();
+    localStorage.removeItem("token");
+    localStorage.removeItem("address");
+    localStorage.removeItem("role");
     if (typeof onLogout === "function") onLogout();
     else window.location.reload();
   };
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const c = await getConfig();
+        setCfg({ watchMarketAddress: String(c.watchMarketAddress || "").trim() });
+      } catch {
+        setCfg({ watchMarketAddress: "" });
+      }
+    })();
+  }, []);
 
   const refreshInventory = async () => {
     setInvLoading(true);
@@ -54,77 +92,89 @@ export default function Reseller({ address, onLogout }) {
     }
   };
 
-  const toWei18 = (lux) => {
-    const n = String(lux || "").trim();
-    if (!n) return "0";
-    if (n.includes(".")) {
-      throw new Error("Inserisci un numero intero di LUX (es. 20), niente decimali.");
+  const refreshCoinInfo = async () => {
+    try {
+      const b = await apiGet("/coin/balance");
+      setLuxBalanceWei(String(b?.balance ?? "0"));
+    } catch {
+      setLuxBalanceWei("0");
     }
-    return `${n}000000000000000000`;
+
+    try {
+      const a = await apiGet("/coin/allowance");
+      setLuxAllowanceWei(String(a?.allowance ?? "0"));
+    } catch {
+      setLuxAllowanceWei("0");
+    }
   };
 
-  // Approve ERC20 (LuxuryCoin) -> spender WatchMarket
-  // amount deve essere in wei (18 decimali) es: 10 LUX => 10000000000000000000
   const ensureApprove = async (amountWei) => {
-    const s = (WATCHMARKET_ADDRESS || "").trim();
+    const spender = String(cfg.watchMarketAddress || "").trim();
+    if (!/^0x[a-fA-F0-9]{40}$/.test(spender)) {
+      throw new Error(`WatchMarket address non valido da /config: '${spender}'`);
+    }
 
-    if (!/^0x[a-fA-F0-9]{40}$/.test(s)) {
-      throw new Error(
-        `VITE_WATCHMARKET_ADDRESS non valido: '${WATCHMARKET_ADDRESS}'. Deve essere un address 0x... da 40 hex.`
-      );
+    if (useApproveMax) {
+      await apiPost("/coin/approveMax", { spender });
+      return;
     }
 
     const amt = String(amountWei ?? "").trim();
-    if (!/^\d+$/.test(amt)) {
-      throw new Error(`Prezzo non valido per approve: '${amountWei}'`);
-    }
-
-    await apiPost("/coin/approve", { spender: s, amount: amt });
+    if (!/^\d+$/.test(amt)) throw new Error(`Prezzo non valido: '${amountWei}'`);
+    await apiPost("/coin/approve", { spender, amount: amt });
   };
 
   const doBuyPrimary = async (listing) => {
+    setBusy(true);
+    setStatus({ type: "info", text: "Acquisto PRIMARY in corso: approve → buy…" });
     try {
-      // 1) approve spender=WatchMarket amount=price
       await ensureApprove(String(listing.price));
-
-      // 2) buy
       await apiPost("/market/buy", { tokenId: String(listing.tokenId) });
-
-      alert(`Acquisto avviato per tokenId ${listing.tokenId}.`);
+      setStatus({ type: "ok", text: `Acquisto avviato per tokenId ${listing.tokenId}.` });
       await refreshListings();
       await refreshInventory();
+      await refreshCoinInfo();
     } catch (e) {
-      alert(String(e.message || e));
+      setStatus({ type: "err", text: String(e.message || e) });
+    } finally {
+      setBusy(false);
     }
   };
 
   const doCertify = async (tokenId) => {
+    setBusy(true);
+    setStatus({ type: "info", text: `Certificazione tokenId ${tokenId}…` });
     try {
       await apiPost("/nft/certify", { tokenId: String(tokenId) });
-      alert(`Certificazione avviata per tokenId ${tokenId}.`);
+      setStatus({ type: "ok", text: `Certificazione avviata per tokenId ${tokenId}.` });
       await refreshInventory();
     } catch (e) {
-      alert(String(e.message || e));
+      setStatus({ type: "err", text: String(e.message || e) });
+    } finally {
+      setBusy(false);
     }
   };
 
   const doListSecondary = async (tokenId) => {
+    setBusy(true);
+    setStatus({ type: "info", text: `Listing SECONDARY tokenId ${tokenId}…` });
     try {
       const p = toWei18(secondaryPriceLux);
       await apiPost("/market/listSecondary", { tokenId: String(tokenId), price: p });
-      alert(`Listing SECONDARY creato per tokenId ${tokenId}.`);
+      setStatus({ type: "ok", text: `Listing SECONDARY creato per tokenId ${tokenId}.` });
       await refreshListings();
     } catch (e) {
-      alert(String(e.message || e));
+      setStatus({ type: "err", text: String(e.message || e) });
+    } finally {
+      setBusy(false);
     }
   };
 
-  const primaryListings = listings.filter(
-    (x) => String(x.saleType).toUpperCase() === "PRIMARY"
-  );
-  const secondaryListings = listings.filter(
-    (x) => String(x.saleType).toUpperCase() === "SECONDARY"
-  );
+  const primaryListings = listings.filter((x) => String(x.saleType).toUpperCase() === "PRIMARY");
+  const secondaryListings = listings.filter((x) => String(x.saleType).toUpperCase() === "SECONDARY");
+
+  const statusBg =
+    status.type === "ok" ? "#103b1f" : status.type === "err" ? "#3b1010" : status.type === "info" ? "#10203b" : "transparent";
 
   return (
     <div style={{ padding: 32, color: "#fff" }}>
@@ -134,6 +184,24 @@ export default function Reseller({ address, onLogout }) {
           <div style={{ marginTop: 10, opacity: 0.9 }}>
             <div>
               Logged as: <b>{me}</b>
+            </div>
+            <div style={{ marginTop: 6, fontSize: 13, opacity: 0.85 }}>
+              LUX balance: <b>{fromWei18(luxBalanceWei)}</b> | allowance→market: <b>{fromWei18(luxAllowanceWei)}</b>
+              <button
+                onClick={refreshCoinInfo}
+                disabled={busy}
+                style={{
+                  marginLeft: 10,
+                  background: "#111",
+                  border: "1px solid #222",
+                  color: "white",
+                  padding: "6px 10px",
+                  borderRadius: 10,
+                  cursor: busy ? "not-allowed" : "pointer",
+                }}
+              >
+                Refresh coin
+              </button>
             </div>
           </div>
         </div>
@@ -153,34 +221,54 @@ export default function Reseller({ address, onLogout }) {
         </button>
       </div>
 
-      <div style={{ marginTop: 34 }}>
-        <h2 style={{ marginBottom: 8 }}>Market PRIMARY (compra dal Producer)</h2>
+      {status.text ? (
+        <div
+          style={{
+            marginTop: 18,
+            background: statusBg,
+            border: "1px solid #222",
+            borderRadius: 12,
+            padding: "10px 12px",
+            opacity: 0.95,
+          }}
+        >
+          {status.text}
+        </div>
+      ) : null}
 
-        {WATCHMARKET_ADDRESS ? null : (
-          <div style={{ color: "#ffcc00", marginBottom: 12 }}>
-            Nota: manca <b>VITE_WATCHMARKET_ADDRESS</b> nel frontend .env → l&apos;acquisto fallirà
-            perché serve approve prima di buy.
-          </div>
-        )}
+      <div style={{ marginTop: 24, display: "flex", alignItems: "center", gap: 10 }}>
+        <input
+          type="checkbox"
+          checked={useApproveMax}
+          onChange={(e) => setUseApproveMax(e.target.checked)}
+          id="approveMax"
+        />
+        <label htmlFor="approveMax" style={{ opacity: 0.9 }}>
+          Usa approve infinito (consigliato)
+        </label>
+      </div>
+
+      <div style={{ marginTop: 26 }}>
+        <h2 style={{ marginBottom: 8 }}>Market PRIMARY (compra dal Producer)</h2>
 
         {listError ? <div style={{ color: "#ff4d4f", marginBottom: 12 }}>{listError}</div> : null}
 
         <button
           onClick={refreshListings}
-          disabled={listLoading}
+          disabled={listLoading || busy}
           style={{
             background: "#111",
             border: "1px solid #fff",
             color: "white",
             padding: "12px 18px",
             borderRadius: 10,
-            cursor: listLoading ? "not-allowed" : "pointer",
+            cursor: listLoading || busy ? "not-allowed" : "pointer",
           }}
         >
           {listLoading ? "Loading..." : "Refresh listings"}
         </button>
 
-        <ul style={{ marginTop: 16, opacity: 0.9 }}>
+        <ul style={{ marginTop: 16, opacity: 0.95 }}>
           {primaryListings.length === 0 ? (
             <li>Nessun listing PRIMARY attivo.</li>
           ) : (
@@ -188,11 +276,11 @@ export default function Reseller({ address, onLogout }) {
               <li key={`${l.tokenId}-${idx}`} style={{ marginBottom: 12 }}>
                 <div>
                   <b>tokenId:</b> {String(l.tokenId)} | <b>seller:</b> {String(l.seller)} |{" "}
-                  <b>price:</b> {String(l.price)} | <b>saleType:</b> {String(l.saleType)}
+                  <b>price:</b> <b>{fromWei18(l.price)} LUX</b> | <b>saleType:</b> {String(l.saleType)}
                 </div>
-
                 <button
                   onClick={() => doBuyPrimary(l)}
+                  disabled={busy}
                   style={{
                     marginTop: 8,
                     background: "#111",
@@ -200,7 +288,7 @@ export default function Reseller({ address, onLogout }) {
                     color: "white",
                     padding: "10px 14px",
                     borderRadius: 10,
-                    cursor: "pointer",
+                    cursor: busy ? "not-allowed" : "pointer",
                   }}
                 >
                   Compra (PRIMARY)
@@ -220,14 +308,14 @@ export default function Reseller({ address, onLogout }) {
 
         <button
           onClick={refreshInventory}
-          disabled={invLoading}
+          disabled={invLoading || busy}
           style={{
             background: "#111",
             border: "1px solid #222",
             color: "white",
             padding: "12px 18px",
             borderRadius: 10,
-            cursor: invLoading ? "not-allowed" : "pointer",
+            cursor: invLoading || busy ? "not-allowed" : "pointer",
           }}
         >
           {invLoading ? "Loading..." : "Refresh inventory"}
@@ -252,27 +340,27 @@ export default function Reseller({ address, onLogout }) {
           </div>
         </div>
 
-        <ul style={{ marginTop: 16, opacity: 0.9 }}>
+        <ul style={{ marginTop: 16, opacity: 0.95 }}>
           {inventory.length === 0 ? (
             <li>Nessun NFT in inventory (o non hai fatto refresh).</li>
           ) : (
             inventory.map((it, idx) => (
               <li key={`${it.tokenId ?? idx}-${idx}`} style={{ marginBottom: 14 }}>
                 <div>
-                  <b>tokenId:</b> {String(it.tokenId)} | <b>certified:</b>{" "}
-                  <b>{String(it.certified)}</b>
+                  <b>tokenId:</b> {String(it.tokenId)} | <b>certified:</b> <b>{String(it.certified)}</b>
                 </div>
 
                 <div style={{ display: "flex", gap: 10, marginTop: 8 }}>
                   <button
                     onClick={() => doCertify(it.tokenId)}
+                    disabled={busy}
                     style={{
                       background: "#111",
                       border: "1px solid #222",
                       color: "white",
                       padding: "10px 14px",
                       borderRadius: 10,
-                      cursor: "pointer",
+                      cursor: busy ? "not-allowed" : "pointer",
                     }}
                   >
                     Certifica
@@ -280,13 +368,14 @@ export default function Reseller({ address, onLogout }) {
 
                   <button
                     onClick={() => doListSecondary(it.tokenId)}
+                    disabled={busy}
                     style={{
                       background: "#111",
                       border: "1px solid #fff",
                       color: "white",
                       padding: "10px 14px",
                       borderRadius: 10,
-                      cursor: "pointer",
+                      cursor: busy ? "not-allowed" : "pointer",
                     }}
                   >
                     Lista SECONDARY
@@ -302,14 +391,14 @@ export default function Reseller({ address, onLogout }) {
 
       <div>
         <h2 style={{ marginBottom: 8 }}>Market SECONDARY (vista)</h2>
-        <ul style={{ marginTop: 16, opacity: 0.9 }}>
+        <ul style={{ marginTop: 16, opacity: 0.95 }}>
           {secondaryListings.length === 0 ? (
             <li>Nessun listing SECONDARY attivo.</li>
           ) : (
             secondaryListings.map((l, idx) => (
               <li key={`${l.tokenId}-s-${idx}`} style={{ marginBottom: 10 }}>
                 <b>tokenId:</b> {String(l.tokenId)} | <b>seller:</b> {String(l.seller)} |{" "}
-                <b>price:</b> {String(l.price)} | <b>saleType:</b> {String(l.saleType)}
+                <b>price:</b> <b>{fromWei18(l.price)} LUX</b> | <b>saleType:</b> {String(l.saleType)}
               </li>
             ))
           )}

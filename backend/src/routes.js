@@ -2,21 +2,34 @@
 import express from "express";
 import { requireAuth } from "./jwt.js";
 import { buildInventory } from "./inventory.js";
-import { approveLux } from "./market.js";
-import { getActiveListings, listPrimary, listSecondary, buy, certify } from "./market.js";
+import {
+  getActiveListings,
+  listPrimary,
+  listSecondary,
+  buy,
+  certify,
+  approveLux,
+  approveLuxMax,
+  coinBalance,
+  coinAllowance,
+} from "./market.js";
 
 const router = express.Router();
 
-// sanity
-router.get("/me", requireAuth, (req, res) => {
-  res.json({ address: req.user?.address, role: req.user?.role });
+// CONFIG (public)
+router.get("/config", (req, res) => {
+  res.json({
+    watchMarketAddress: process.env.WATCHMARKET_ADDRESS || "",
+    watchNftAddress: process.env.WATCHNFT_ADDRESS || "",
+    luxuryCoinAddress: process.env.LUXURYCOIN_ADDRESS || "",
+  });
 });
 
 // INVENTORY
 router.get("/inventory", requireAuth, async (req, res) => {
   try {
     const role = req.user?.role;
-    const address = req.user?.address;
+    const address = req.user?.address; // attenzione: nel tuo JWT tu salvi address qui
     const out = await buildInventory(role, address);
     res.json(out);
   } catch (err) {
@@ -25,7 +38,7 @@ router.get("/inventory", requireAuth, async (req, res) => {
   }
 });
 
-// MARKET: listings
+// MARKET LISTINGS
 router.get("/market/listings", requireAuth, async (req, res) => {
   try {
     const out = await getActiveListings();
@@ -36,7 +49,7 @@ router.get("/market/listings", requireAuth, async (req, res) => {
   }
 });
 
-// PRODUCER: list primary
+// PRODUCER: listPrimary
 router.post("/market/listPrimary", requireAuth, async (req, res) => {
   try {
     const role = req.user?.role;
@@ -44,12 +57,12 @@ router.post("/market/listPrimary", requireAuth, async (req, res) => {
     const out = await listPrimary(role, tokenId, price);
     res.json(out);
   } catch (err) {
-    console.error("LIST_PRIMARY FAILED:", err.response?.data || err.message);
+    console.error("LIST PRIMARY FAILED:", err.response?.data || err.message);
     res.status(400).json({ error: err.response?.data || err.message });
   }
 });
 
-// RESELLER: list secondary
+// RESELLER: listSecondary
 router.post("/market/listSecondary", requireAuth, async (req, res) => {
   try {
     const role = req.user?.role;
@@ -57,12 +70,12 @@ router.post("/market/listSecondary", requireAuth, async (req, res) => {
     const out = await listSecondary(role, tokenId, price);
     res.json(out);
   } catch (err) {
-    console.error("LIST_SECONDARY FAILED:", err.response?.data || err.message);
+    console.error("LIST SECONDARY FAILED:", err.response?.data || err.message);
     res.status(400).json({ error: err.response?.data || err.message });
   }
 });
 
-// BUY (reseller/consumer)
+// RESELLER/CONSUMER: buy
 router.post("/market/buy", requireAuth, async (req, res) => {
   try {
     const role = req.user?.role;
@@ -88,6 +101,7 @@ router.post("/nft/certify", requireAuth, async (req, res) => {
   }
 });
 
+// COIN: approve (reseller/consumer)
 router.post("/coin/approve", requireAuth, async (req, res) => {
   try {
     const role = req.user?.role;
@@ -95,9 +109,49 @@ router.post("/coin/approve", requireAuth, async (req, res) => {
     const out = await approveLux(role, spender, amount);
     res.json(out);
   } catch (err) {
+    console.error("APPROVE FAILED:", err.response?.data || err.message);
     res.status(400).json({ error: err.response?.data || err.message });
   }
 });
 
+// COIN: approve MAX (reseller/consumer)
+router.post("/coin/approveMax", requireAuth, async (req, res) => {
+  try {
+    const role = req.user?.role;
+    const { spender } = req.body || {};
+    const out = await approveLuxMax(role, spender);
+    res.json(out);
+  } catch (err) {
+    console.error("APPROVE MAX FAILED:", err.response?.data || err.message);
+    res.status(400).json({ error: err.response?.data || err.message });
+  }
+});
+
+// COIN: balance (self)
+router.get("/coin/balance", requireAuth, async (req, res) => {
+  try {
+    const role = req.user?.role;
+    const address = req.user?.address;
+    const bal = await coinBalance(role, address);
+    res.json({ address, balance: bal });
+  } catch (err) {
+    console.error("BALANCE FAILED:", err.response?.data || err.message);
+    res.status(400).json({ error: err.response?.data || err.message });
+  }
+});
+
+// COIN: allowance (self -> WatchMarket)
+router.get("/coin/allowance", requireAuth, async (req, res) => {
+  try {
+    const role = req.user?.role;
+    const owner = req.user?.address;
+    const spender = process.env.WATCHMARKET_ADDRESS || "";
+    const a = await coinAllowance(role, owner, spender);
+    res.json({ owner, spender, allowance: a });
+  } catch (err) {
+    console.error("ALLOWANCE FAILED:", err.response?.data || err.message);
+    res.status(400).json({ error: err.response?.data || err.message });
+  }
+});
 
 export default router;
