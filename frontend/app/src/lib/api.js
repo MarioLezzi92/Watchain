@@ -6,27 +6,12 @@ const BASE = "http://localhost:3001";
 function buildAuthHeader() {
   const t = getToken();
   if (!t) return null;
-
-  // rimuove QUALSIASI whitespace (newline, tab, spazi) dal token
   const cleanToken = String(t).replace(/\s+/g, "");
-
-  // se per qualche motivo rimane vuoto, non mandare header
   if (!cleanToken) return null;
-
   return `Bearer ${cleanToken}`;
 }
 
-export async function apiGet(path) {
-  const auth = buildAuthHeader();
-
-  const headers = { Accept: "application/json" };
-  if (auth) headers.Authorization = auth;
-
-  // DEBUG: vedi esattamente cosa stai mandando
-  console.log("AUTH HEADER SENT:", JSON.stringify(headers.Authorization));
-
-  const res = await fetch(`${BASE}${path}`, { headers });
-
+async function parseResponse(res) {
   const text = await res.text();
   let data;
   try {
@@ -41,4 +26,30 @@ export async function apiGet(path) {
   }
 
   return data;
+}
+
+export async function apiGet(path) {
+  const auth = buildAuthHeader();
+  const headers = { Accept: "application/json" };
+  if (auth) headers.Authorization = auth;
+
+  const res = await fetch(`${BASE}${path}`, { headers });
+  return parseResponse(res);
+}
+
+export async function apiPost(path, body = {}) {
+  const auth = buildAuthHeader();
+  const headers = {
+    Accept: "application/json",
+    "Content-Type": "application/json",
+  };
+  if (auth) headers.Authorization = auth;
+
+  const res = await fetch(`${BASE}${path}`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(body),
+  });
+
+  return parseResponse(res);
 }

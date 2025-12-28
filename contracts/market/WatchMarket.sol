@@ -2,82 +2,105 @@
 pragma solidity ^0.8.20;
 
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
-import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 
-import "../tokens/LuxuryCoin.sol";
-import "../nfts/WatchNFT.sol";
+interface IWatchNFT is IERC721 {
+    function certified(uint256 tokenId) external view returns (bool);
+    function reseller(address who) external view returns (bool);
+    function factory() external view returns (address);
+}
 
-contract WatchMarket is Ownable, ReentrancyGuard {
-    LuxuryCoin public immutable coin;
-    WatchNFT public immutable watch;
+contract WatchMarket is ReentrancyGuard {
+    enum SaleType {
+        PRIMARY,    // Producer -> Reseller
+        SECONDARY   // Reseller -> Consumer
+    }
 
     struct Listing {
         address seller;
         uint256 price;
-        bool requireCertified;
+        SaleType saleType;
         bool exists;
     }
 
-    mapping(uint256 => Listing) public listings; // tokenId -> listing
+    IERC20 public immutable coin;
+    IWatchNFT public immutable watch;
 
-    event Listed(uint256 indexed tokenId, address indexed seller, uint256 price, bool requireCertified);
-    event Unlisted(uint256 indexed tokenId, address indexed seller);
-    event Sold(uint256 indexed tokenId, address indexed seller, address indexed buyer, uint256 price);
+    mapping(uint256 => Listing) public listings;
 
-    constructor(address coin_, address watch_) Ownable(msg.sender) {
-        coin = LuxuryCoin(coin_);
-        watch = WatchNFT(watch_);
+    event Listed(
+        uint256 indexed tokenId,
+        address indexed seller,
+        uint256 price,
+        SaleType saleType
+    );
+
+    event Purchased(
+        uint256 indexed tokenId,
+        address indexed buyer,
+        address indexed seller,
+        uint256 price,
+        SaleType saleType
+    );
+
+    constructor(address coin_, address watch_) {
+        coin = IERC20(coin_);
+        watch = IWatchNFT(watch_);
     }
 
-    function list(uint256 tokenId, uint256 price, bool requireCertified) external {
+    function listPrimary(uint256 tokenId, uint256 price) external {
         require(price > 0, "price=0");
+        require(msg.sender == watch.factory(), "not factory");
         require(watch.ownerOf(tokenId) == msg.sender, "not owner");
-
-        // Se è vendita "retail" (venditore -> cliente), imponi certificazione
-        if (requireCertified) {
-            require(watch.certified(tokenId), "not certified");
-        }
-
-        // mercato deve poter trasferire l’NFT al momento del buy
-        require(
-            watch.getApproved(tokenId) == address(this) || watch.isApprovedForAll(msg.sender, address(this)),
-            "approve market first"
-        );
 
         listings[tokenId] = Listing({
             seller: msg.sender,
             price: price,
-            requireCertified: requireCertified,
+            saleType: SaleType.PRIMARY,
             exists: true
         });
 
-        emit Listed(tokenId, msg.sender, price, requireCertified);
+        emit Listed(tokenId, msg.sender, price, SaleType.PRIMARY);
     }
 
-    function cancel(uint256 tokenId) external {
-        Listing memory l = listings[tokenId];
-        require(l.exists, "not listed");
-        require(l.seller == msg.sender, "not seller");
-        delete listings[tokenId];
-        emit Unlisted(tokenId, msg.sender);
+    function listSecondary(uint256 tokenId, uint256 price) external {
+        require(price > 0, "price=0");
+        require(watch.reseller(msg.sender), "not reseller");
+        require(watch.ownerOf(tokenId) == msg.sender, "not owner");
+        require(watch.certified(tokenId), "not certified");
+
+        listings[tokenId] = Listing({
+            seller: msg.sender,
+            price: price,
+            saleType: SaleType.SECONDARY,
+            exists: true
+        });
+
+        emit Listed(tokenId, msg.sender, price, SaleType.SECONDARY);
     }
 
     function buy(uint256 tokenId) external nonReentrant {
         Listing memory l = listings[tokenId];
         require(l.exists, "not listed");
-        require(msg.sender != l.seller, "cannot buy your own");
-        require(watch.ownerOf(tokenId) == l.seller, "seller not owner");
 
-        if (l.requireCertified) {
-            require(watch.certified(tokenId), "not certified");
+        if (l.saleType == SaleType.PRIMARY) {
+            require(watch.reseller(msg.sender), "buyer not reseller");
         }
 
         delete listings[tokenId];
 
-        require(coin.transferFrom(msg.sender, l.seller, l.price), "pay fail");
+        require(
+            coin.transferFrom(msg.sender, l.seller, l.price),
+            "coin transfer failed"
+        );
+
         watch.transferFrom(l.seller, msg.sender, tokenId);
 
-        emit Sold(tokenId, l.seller, msg.sender, l.price);
+        emit Purchased(tokenId, msg.sender, l.seller, l.price, l.saleType);
     }
 
+    function getListing(uint256 tokenId) external view returns (Listing memory) {
+        return listings[tokenId];
+    }
 }

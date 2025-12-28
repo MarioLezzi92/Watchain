@@ -1,46 +1,7 @@
+// frontend/app/src/pages/Consumer.jsx
 import React, { useMemo, useState } from "react";
-
-const API_BASE = "http://localhost:3001";
-
-function getStoredJwt() {
-  // compatibilità: a volte hai salvato jwt, a volte token
-  return localStorage.getItem("jwt") || localStorage.getItem("token") || "";
-}
-
-function safeJsonParse(text) {
-  try {
-    return JSON.parse(text);
-  } catch {
-    return null;
-  }
-}
-
-async function fetchJSON(path) {
-  const token = getStoredJwt();
-  const res = await fetch(`${API_BASE}${path}`, {
-    method: "GET",
-    headers: {
-      "Accept": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
-  });
-
-  const text = await res.text(); // così catturiamo anche HTML tipo "Cannot GET ..."
-  const maybeJson = safeJsonParse(text);
-
-  if (!res.ok) {
-    const msg =
-      (maybeJson && (maybeJson.error || maybeJson.message)) ||
-      text ||
-      `HTTP ${res.status}`;
-    const err = new Error(msg);
-    err.status = res.status;
-    throw err;
-  }
-
-  // Se torna JSON ok, usalo. Se torna testo, prova a parsarlo.
-  return maybeJson ?? text;
-}
+import { apiGet, apiPost } from "../lib/api";
+import { getAddress } from "../lib/auth";
 
 export default function Consumer({ address, onLogout }) {
   const [invLoading, setInvLoading] = useState(false);
@@ -51,13 +12,12 @@ export default function Consumer({ address, onLogout }) {
   const [listError, setListError] = useState("");
   const [listings, setListings] = useState([]);
 
-  const jwt = useMemo(() => getStoredJwt(), []);
+  const me = useMemo(() => address || getAddress() || "-", [address]);
 
   const logout = () => {
-    // pulizia "hard"
-    localStorage.removeItem("jwt");
     localStorage.removeItem("token");
     localStorage.removeItem("address");
+    localStorage.removeItem("role");
     if (typeof onLogout === "function") onLogout();
     else window.location.reload();
   };
@@ -66,13 +26,11 @@ export default function Consumer({ address, onLogout }) {
     setInvLoading(true);
     setInvError("");
     try {
-      const data = await fetchJSON("/inventory");
-      // mi aspetto: [{ tokenId, owner, certified }, ...]
-      if (Array.isArray(data)) setInventory(data);
-      else setInventory([]);
+      const data = await apiGet("/inventory");
+      setInventory(Array.isArray(data) ? data : []);
     } catch (e) {
       setInventory([]);
-      setInvError(`HTTP ${e.status || "?"} - ${e.message}`);
+      setInvError(String(e.message || e));
     } finally {
       setInvLoading(false);
     }
@@ -82,15 +40,26 @@ export default function Consumer({ address, onLogout }) {
     setListLoading(true);
     setListError("");
     try {
-      const data = await fetchJSON("/market/listings");
-      // mi aspetto: array (anche vuoto)
-      if (Array.isArray(data)) setListings(data);
-      else setListings([]);
+      const data = await apiGet("/market/listings");
+      const arr = Array.isArray(data) ? data : [];
+      // safety: consumer deve vedere solo SECONDARY
+      setListings(arr.filter((x) => String(x.saleType).toUpperCase() === "SECONDARY"));
     } catch (e) {
       setListings([]);
-      setListError(`HTTP ${e.status || "?"} - ${e.message}`);
+      setListError(String(e.message || e));
     } finally {
       setListLoading(false);
+    }
+  };
+
+  const doBuy = async (tokenId) => {
+    try {
+      await apiPost("/market/buy", { tokenId: String(tokenId) });
+      await refreshListings();
+      await refreshInventory();
+      alert(`Acquisto avviato per tokenId ${tokenId} (controlla Events/Inventory).`);
+    } catch (e) {
+      alert(String(e.message || e));
     }
   };
 
@@ -100,9 +69,8 @@ export default function Consumer({ address, onLogout }) {
         <div>
           <h1 style={{ fontSize: 56, margin: 0, lineHeight: 1.05 }}>Consumer Dashboard</h1>
           <div style={{ marginTop: 10, opacity: 0.9 }}>
-            <div>Logged as: <b>{address || localStorage.getItem("address") || "-"}</b></div>
-            <div style={{ fontSize: 12, opacity: 0.7, marginTop: 6 }}>
-              JWT presente: <b>{jwt ? "sì" : "no"}</b>
+            <div>
+              Logged as: <b>{me}</b>
             </div>
           </div>
         </div>
@@ -125,9 +93,7 @@ export default function Consumer({ address, onLogout }) {
       <div style={{ marginTop: 34 }}>
         <h2 style={{ marginBottom: 8 }}>Inventory (live)</h2>
 
-        {invError ? (
-          <div style={{ color: "#ff4d4f", marginBottom: 12 }}>{invError}</div>
-        ) : null}
+        {invError ? <div style={{ color: "#ff4d4f", marginBottom: 12 }}>{invError}</div> : null}
 
         <button
           onClick={refreshInventory}
@@ -150,9 +116,8 @@ export default function Consumer({ address, onLogout }) {
           ) : (
             inventory.map((it, idx) => (
               <li key={`${it.tokenId ?? idx}-${idx}`} style={{ marginBottom: 8 }}>
-                <b>tokenId:</b> {String(it.tokenId)}{" "}
-                | <b>owner:</b> {String(it.owner)}{" "}
-                | <b>certified:</b> <b>{String(it.certified)}</b>
+                <b>tokenId:</b> {String(it.tokenId)} | <b>owner:</b> {String(it.owner)} |{" "}
+                <b>certified:</b> <b>{String(it.certified)}</b>
               </li>
             ))
           )}
@@ -162,11 +127,9 @@ export default function Consumer({ address, onLogout }) {
       <hr style={{ margin: "28px 0", borderColor: "#2a2a2a" }} />
 
       <div>
-        <h2 style={{ marginBottom: 8 }}>Market listings (live)</h2>
+        <h2 style={{ marginBottom: 8 }}>Market listings (SECONDARY)</h2>
 
-        {listError ? (
-          <div style={{ color: "#ff4d4f", marginBottom: 12 }}>{listError}</div>
-        ) : null}
+        {listError ? <div style={{ color: "#ff4d4f", marginBottom: 12 }}>{listError}</div> : null}
 
         <button
           onClick={refreshListings}
@@ -185,16 +148,28 @@ export default function Consumer({ address, onLogout }) {
 
         <ul style={{ marginTop: 16, opacity: 0.9 }}>
           {listings.length === 0 ? (
-            <li>Nessun listing attivo.</li>
+            <li>Nessun listing SECONDARY attivo.</li>
           ) : (
             listings.map((l, idx) => (
-              <li key={l.id || idx} style={{ marginBottom: 10 }}>
+              <li key={`${l.tokenId}-${idx}`} style={{ marginBottom: 10 }}>
                 <div>
-                  <b>tokenId:</b> {String(l.tokenId ?? "-")}{" "}
-                  | <b>seller:</b> {String(l.seller ?? "-")}{" "}
-                  | <b>price:</b> {String(l.price ?? "-")}{" "}
-                  | <b>requireCertified:</b> {String(l.requireCertified ?? "-")}
+                  <b>tokenId:</b> {String(l.tokenId ?? "-")} | <b>seller:</b> {String(l.seller ?? "-")} |{" "}
+                  <b>price:</b> {String(l.price ?? "-")} | <b>saleType:</b> {String(l.saleType ?? "-")}
                 </div>
+                <button
+                  onClick={() => doBuy(l.tokenId)}
+                  style={{
+                    marginTop: 8,
+                    background: "#111",
+                    border: "1px solid #222",
+                    color: "white",
+                    padding: "10px 14px",
+                    borderRadius: 10,
+                    cursor: "pointer",
+                  }}
+                >
+                  Compra
+                </button>
               </li>
             ))
           )}
