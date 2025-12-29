@@ -1,6 +1,6 @@
 // backend/src/routes.js
 import express from "express";
-import { requireAuth } from "./jwt.js";
+import { requireAuth } from "./auth.js";
 import { buildInventory } from "./inventory.js";
 import {
   getActiveListings,
@@ -9,47 +9,63 @@ import {
   buy,
   certify,
   approveLux,
-  approveLuxMax,
-  coinBalance,
-  coinAllowance,
+  mintNft, // NEW
 } from "./market.js";
 
 const router = express.Router();
 
-// CONFIG (public)
-router.get("/config", (req, res) => {
+router.get("/debug/config", (req, res) => {
   res.json({
-    watchMarketAddress: process.env.WATCHMARKET_ADDRESS || "",
-    watchNftAddress: process.env.WATCHNFT_ADDRESS || "",
-    luxuryCoinAddress: process.env.LUXURYCOIN_ADDRESS || "",
+    port: process.env.PORT,
+    watchmarket: process.env.WATCHMARKET_ADDRESS,
+    producerBase: process.env.FF_PRODUCER_BASE,
+    resellerBase: process.env.FF_RESELLER_BASE,
+    consumerBase: process.env.FF_CONSUMER_BASE,
   });
 });
 
-// INVENTORY
 router.get("/inventory", requireAuth, async (req, res) => {
   try {
+    const address = req.user?.sub;
     const role = req.user?.role;
-    const address = req.user?.address; // attenzione: nel tuo JWT tu salvi address qui
-    const out = await buildInventory(role, address);
-    res.json(out);
+    const inv = await buildInventory(role, address);
+    res.json(inv);
   } catch (err) {
-    console.error("INVENTORY FAILED:", err.response?.data || err.message);
-    res.status(400).json({ error: err.response?.data || err.message });
+    console.error("INVENTORY FAILED:", err?.response?.data || err?.message || err);
+    res.status(500).json({ error: String(err?.message || "inventory failed") });
   }
 });
 
-// MARKET LISTINGS
 router.get("/market/listings", requireAuth, async (req, res) => {
   try {
-    const out = await getActiveListings();
-    res.json(out);
+    const role = String(req.user?.role || "").toLowerCase();
+    const listings = await getActiveListings();
+
+    if (role === "consumer") {
+      return res.json(listings.filter((l) => String(l.saleType).toUpperCase() === "SECONDARY"));
+    }
+    res.json(listings);
   } catch (err) {
-    console.error("LISTINGS FAILED:", err.response?.data || err.message);
-    res.status(400).json({ error: err.response?.data || err.message });
+    console.error("MARKET LISTINGS FAILED:", err?.response?.data || err?.message || err);
+    res.status(500).json({ error: String(err?.message || "market listings failed") });
   }
 });
 
-// PRODUCER: listPrimary
+// ✅ NEW: PRODUCER mint
+router.post("/nft/mint", requireAuth, async (req, res) => {
+  try {
+    const role = String(req.user?.role || "").toLowerCase();
+    if (role !== "producer") throw new Error("Only producer can mint");
+
+    const { to } = req.body || {};
+    const out = await mintNft(to); // se to manca, mint al producer
+    res.json(out);
+  } catch (err) {
+    console.error("MINT FAILED:", err?.response?.data || err?.message || err);
+    res.status(400).json({ error: String(err?.message || JSON.stringify(err?.response?.data || err)) });
+  }
+});
+
 router.post("/market/listPrimary", requireAuth, async (req, res) => {
   try {
     const role = req.user?.role;
@@ -57,12 +73,11 @@ router.post("/market/listPrimary", requireAuth, async (req, res) => {
     const out = await listPrimary(role, tokenId, price);
     res.json(out);
   } catch (err) {
-    console.error("LIST PRIMARY FAILED:", err.response?.data || err.message);
-    res.status(400).json({ error: err.response?.data || err.message });
+    console.error("LIST PRIMARY FAILED:", err?.response?.data || err?.message || err);
+    res.status(400).json({ error: String(err?.message || JSON.stringify(err?.response?.data || err)) });
   }
 });
 
-// RESELLER: listSecondary
 router.post("/market/listSecondary", requireAuth, async (req, res) => {
   try {
     const role = req.user?.role;
@@ -70,25 +85,40 @@ router.post("/market/listSecondary", requireAuth, async (req, res) => {
     const out = await listSecondary(role, tokenId, price);
     res.json(out);
   } catch (err) {
-    console.error("LIST SECONDARY FAILED:", err.response?.data || err.message);
-    res.status(400).json({ error: err.response?.data || err.message });
+    console.error("LIST SECONDARY FAILED:", err?.response?.data || err?.message || err);
+    res.status(400).json({ error: String(err?.message || JSON.stringify(err?.response?.data || err)) });
   }
 });
 
-// RESELLER/CONSUMER: buy
 router.post("/market/buy", requireAuth, async (req, res) => {
+  const role = req.user?.role;
+  const address = req.user?.sub;
+
   try {
-    const role = req.user?.role;
     const { tokenId } = req.body || {};
+    console.log("BUY REQ:", { role, address, body: req.body });
     const out = await buy(role, tokenId);
+    console.log("BUY OK:", { tokenId: String(tokenId), outType: typeof out });
     res.json(out);
   } catch (err) {
-    console.error("BUY FAILED:", err.response?.data || err.message);
-    res.status(400).json({ error: err.response?.data || err.message });
+    const data = err?.response?.data;
+    console.error("BUY FAILED:", { role, address, body: req.body, message: err?.message, ff: data });
+    res.status(400).json({ error: String(err?.message || (data ? JSON.stringify(data) : "buy failed")) });
   }
 });
 
-// RESELLER: certify
+router.post("/luxury/approve", requireAuth, async (req, res) => {
+  try {
+    const role = req.user?.role;
+    const { amountWei } = req.body || {};
+    const out = await approveLux(role, amountWei);
+    res.json(out);
+  } catch (err) {
+    console.error("APPROVE FAILED:", err?.response?.data || err?.message || err);
+    res.status(400).json({ error: String(err?.message || JSON.stringify(err?.response?.data || err)) });
+  }
+});
+
 router.post("/nft/certify", requireAuth, async (req, res) => {
   try {
     const role = req.user?.role;
@@ -96,61 +126,8 @@ router.post("/nft/certify", requireAuth, async (req, res) => {
     const out = await certify(role, tokenId);
     res.json(out);
   } catch (err) {
-    console.error("CERTIFY FAILED:", err.response?.data || err.message);
-    res.status(400).json({ error: err.response?.data || err.message });
-  }
-});
-
-// COIN: approve (reseller/consumer)
-router.post("/coin/approve", requireAuth, async (req, res) => {
-  try {
-    const role = req.user?.role;
-    const { spender, amount } = req.body || {};
-    const out = await approveLux(role, spender, amount);
-    res.json(out);
-  } catch (err) {
-    console.error("APPROVE FAILED:", err.response?.data || err.message);
-    res.status(400).json({ error: err.response?.data || err.message });
-  }
-});
-
-// COIN: approve MAX (reseller/consumer)
-router.post("/coin/approveMax", requireAuth, async (req, res) => {
-  try {
-    const role = req.user?.role;
-    const { spender } = req.body || {};
-    const out = await approveLuxMax(role, spender);
-    res.json(out);
-  } catch (err) {
-    console.error("APPROVE MAX FAILED:", err.response?.data || err.message);
-    res.status(400).json({ error: err.response?.data || err.message });
-  }
-});
-
-// COIN: balance (self)
-router.get("/coin/balance", requireAuth, async (req, res) => {
-  try {
-    const role = req.user?.role;
-    const address = req.user?.address;
-    const bal = await coinBalance(role, address);
-    res.json({ address, balance: bal });
-  } catch (err) {
-    console.error("BALANCE FAILED:", err.response?.data || err.message);
-    res.status(400).json({ error: err.response?.data || err.message });
-  }
-});
-
-// COIN: allowance (self -> WatchMarket)
-router.get("/coin/allowance", requireAuth, async (req, res) => {
-  try {
-    const role = req.user?.role;
-    const owner = req.user?.address;
-    const spender = process.env.WATCHMARKET_ADDRESS || "";
-    const a = await coinAllowance(role, owner, spender);
-    res.json({ owner, spender, allowance: a });
-  } catch (err) {
-    console.error("ALLOWANCE FAILED:", err.response?.data || err.message);
-    res.status(400).json({ error: err.response?.data || err.message });
+    console.error("CERTIFY FAILED:", err?.response?.data || err?.message || err);
+    res.status(400).json({ error: String(err?.message || JSON.stringify(err?.response?.data || err)) });
   }
 });
 

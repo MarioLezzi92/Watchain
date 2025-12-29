@@ -11,9 +11,32 @@ function buildAuthHeader() {
   return `Bearer ${cleanToken}`;
 }
 
+function prettyErr(data) {
+  if (!data) return "";
+  if (typeof data === "string") return data;
+  if (typeof data === "object") {
+    if (data.error) {
+      if (typeof data.error === "string") return data.error;
+      try {
+        return JSON.stringify(data.error);
+      } catch {
+        return String(data.error);
+      }
+    }
+    if (data.message) return String(data.message);
+    try {
+      return JSON.stringify(data);
+    } catch {
+      return String(data);
+    }
+  }
+  return String(data);
+}
+
 async function parseResponse(res) {
-  const text = await res.text();
-  let data;
+  const text = await res.text().catch(() => "");
+  let data = null;
+
   try {
     data = text ? JSON.parse(text) : null;
   } catch {
@@ -21,14 +44,8 @@ async function parseResponse(res) {
   }
 
   if (!res.ok) {
-    const msg =
-      (data && (data.error?.error || data.error || data.message)) ||
-      res.statusText ||
-      "Request failed";
-    const err = new Error(typeof msg === "string" ? msg : JSON.stringify(msg));
-    err.status = res.status;
-    err.data = data;
-    throw err;
+    const msg = prettyErr(data) || `HTTP ${res.status}`;
+    throw new Error(msg);
   }
 
   return data;
@@ -58,15 +75,4 @@ export async function apiPost(path, body = {}) {
   });
 
   return parseResponse(res);
-}
-
-// -------- Config cache --------
-let _configCache = null;
-
-export async function getConfig(force = false) {
-  if (_configCache && !force) return _configCache;
-  const res = await fetch(`${BASE}/config`, { method: "GET", headers: { Accept: "application/json" } });
-  const cfg = await parseResponse(res);
-  _configCache = cfg || {};
-  return _configCache;
 }

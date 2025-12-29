@@ -1,73 +1,104 @@
-// backend/src/auth.js
 import crypto from "crypto";
+import jwt from "jsonwebtoken";
 import { ethers } from "ethers";
-import { signJwt } from "./jwt.js";
 
-function lc(x) {
-  return String(x || "").trim().toLowerCase();
+const JWT_SECRET = process.env.JWT_SECRET || "dev-secret-change-me";
+
+// nonce DB in RAM (address -> { nonce, exp })
+const nonces = new Map();
+const NONCE_TTL_MS = 5 * 60 * 1000; // 5 minuti
+
+function normalizeAddress(addr) {
+  return ethers.getAddress(addr); // checksum + valida
 }
 
-function resolveRoleByAddress(address) {
-  const a = lc(address);
-  if (a && a === lc(process.env.PRODUCER_ADDR)) return "producer";
-  if (a && a === lc(process.env.RESELLER_ADDR)) return "reseller";
-  if (a && a === lc(process.env.CONSUMER_ADDR)) return "consumer";
-  return "consumer";
+function makeNonce() {
+  return crypto.randomBytes(16).toString("hex");
 }
 
-function loginMessage(nonce) {
-  return `Login to WatchDApp\nNonce: ${nonce}`;
+function roleFromAddress(addr) {
+  const a = String(addr || "").toLowerCase();
+
+  const producer = String(process.env.PRODUCER_ADDR || "").toLowerCase();
+  const reseller = String(process.env.RESELLER_ADDR || "").toLowerCase();
+  const consumer = String(process.env.CONSUMER_ADDR || "").toLowerCase();
+
+  if (producer && a === producer) return "producer";
+  if (reseller && a === reseller) return "reseller";
+  if (consumer && a === consumer) return "consumer";
+
+  return null;
 }
 
-const nonces = new Map(); // addressLower -> { nonce, ts }
+// GET /auth/nonce?address=0x...
+export async function getNonce(req, res) {
+  try {
+    const address = normalizeAddress(req.query.address);
+    const nonce = makeNonce();
+    const exp = Date.now() + NONCE_TTL_MS;
 
-export function getNonce(req, res) {
-  const address = String(req.query.address || "").trim();
-  if (!address) return res.status(400).json({ error: "missing address" });
-
-  const nonce = crypto.randomBytes(16).toString("hex");
-  nonces.set(lc(address), { nonce, ts: Date.now() });
-
-  res.json({ nonce });
+    nonces.set(address, { nonce, exp });
+    return res.json({ nonce });
+  } catch {
+    return res.status(400).json({ error: "invalid address" });
+  }
 }
 
+// POST /auth/login { address, signature }
 export async function login(req, res) {
   try {
-    const { address, signature } = req.body || {};
-    if (!address || !signature) {
-      return res.status(400).json({ error: "missing address/signature" });
+    const { address: rawAddress, signature } = req.body || {};
+    if (!rawAddress || !signature) {
+      return res.status(400).json({ error: "missing address or signature" });
     }
 
-    const rec = nonces.get(lc(address));
-    if (!rec?.nonce) {
-      return res.status(400).json({ error: "nonce not found (request /auth/nonce first)" });
+    const address = normalizeAddress(rawAddress);
+
+    const entry = nonces.get(address);
+    if (!entry) return res.status(401).json({ error: "nonce not found" });
+    if (Date.now() > entry.exp) {
+      nonces.delete(address);
+      return res.status(401).json({ error: "nonce expired" });
     }
 
-    const msg = loginMessage(rec.nonce);
+    const message = `Login to WatchDApp\nNonce: ${entry.nonce}`;
 
-    let recovered;
-    try {
-      recovered = ethers.verifyMessage(msg, signature);
-    } catch (e) {
-      return res.status(400).json({ error: `invalid signature: ${String(e?.message || e)}` });
+    // verifica firma
+    const recovered = normalizeAddress(ethers.verifyMessage(message, signature));
+    if (recovered !== address) {
+      return res.status(401).json({ error: "bad signature" });
     }
 
-    if (lc(recovered) !== lc(address)) {
-      return res.status(401).json({ error: "signature does not match address" });
+    // brucia nonce
+    nonces.delete(address);
+
+    // role deciso dal backend (whitelist)
+    const role = roleFromAddress(address);
+    if (!role) {
+      return res.status(403).json({ error: "address not authorized for any role" });
     }
 
-    const role = resolveRoleByAddress(address);
+    const token = jwt.sign({ sub: address, role }, JWT_SECRET, { expiresIn: "2h" });
+    return res.json({ token, role });
+  } catch {
+    return res.status(401).json({ error: "login failed" });
+  }
+}
 
-    const payload = {
-      address: ethers.getAddress(address),
-      role,
-    };
+// middleware auth: Authorization: Bearer <token>
+export function requireAuth(req, res, next) {
+  try {
+    const auth = req.headers.authorization || "";
+    const [type, token] = auth.split(" ");
 
-    const token = signJwt(payload);
+    if (type !== "Bearer" || !token) {
+      return res.status(401).json({ error: "missing token" });
+    }
 
-    nonces.delete(lc(address));
-    res.json({ token, role });
-  } catch (e) {
-    res.status(500).json({ error: String(e?.message || e) });
+    const payload = jwt.verify(token, JWT_SECRET);
+    req.user = payload; // { sub, role, iat, exp }
+    return next();
+  } catch {
+    return res.status(401).json({ error: "invalid token" });
   }
 }

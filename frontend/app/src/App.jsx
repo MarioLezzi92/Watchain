@@ -15,10 +15,9 @@ export default function App() {
   const role = useMemo(() => getStored("role").trim().toLowerCase(), [address]);
 
   const handleLogout = () => {
+    localStorage.removeItem("token");
     localStorage.removeItem("address");
     localStorage.removeItem("role");
-    localStorage.removeItem("token");
-    localStorage.removeItem("jwt");
     setAddress("");
   };
 

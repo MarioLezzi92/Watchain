@@ -1,12 +1,25 @@
 // backend/src/market.js
-import { ffInvoke, ffQuery } from "./firefly.js";
+import { ffQuery, ffInvoke } from "./firefly.js";
 
 const MARKET_API = "WatchMarket_API";
 const NFT_API = "WatchNFT_API";
-const COIN_API = "LuxuryCoin_API";
+const LUX_API = "LuxuryCoin_API";
 
-function normalizeRole(role) {
-  return String(role || "").trim().toLowerCase();
+// accetta più nomi per evitare mismatch
+function resolveWatchMarketAddress() {
+  const a =
+    process.env.WATCHMARKET_ADDRESS ||
+    process.env.WATCHMARKET_ADDR ||
+    process.env.WATCHMARKET_CONTRACT ||
+    "";
+
+  const addr = String(a).trim();
+
+  if (!/^0x[a-fA-F0-9]{40}$/.test(addr)) {
+    throw new Error("WATCHMARKET_ADDRESS mancante o non valido nel backend .env");
+  }
+
+  return addr;
 }
 
 function unwrapFFOutput(resp) {
@@ -18,27 +31,26 @@ function unwrapFFOutput(resp) {
   if (Array.isArray(out)) return out[0];
 
   if (typeof out === "object") {
-    if ("0" in out) return out; // tuple/struct
     const keys = Object.keys(out);
     if (keys.length === 1) return out[keys[0]];
     return out;
   }
-
   return undefined;
 }
 
 function normalizeSaleType(v) {
   if (typeof v === "number") return v === 0 ? "PRIMARY" : "SECONDARY";
   const s = String(v || "").toUpperCase();
-  if (s.includes("PRIMARY")) return "PRIMARY";
-  if (s.includes("SECONDARY")) return "SECONDARY";
   if (s === "0") return "PRIMARY";
   if (s === "1") return "SECONDARY";
+  if (s.includes("PRIMARY")) return "PRIMARY";
+  if (s.includes("SECONDARY")) return "SECONDARY";
   return s || "UNKNOWN";
 }
 
 function parseListingStruct(raw) {
   if (!raw) return null;
+
   const seller = raw.seller ?? raw["0"];
   const price = raw.price ?? raw["1"];
   const saleType = raw.saleType ?? raw["2"];
@@ -52,45 +64,44 @@ function parseListingStruct(raw) {
   };
 }
 
-// -------------------- LISTINGS (state-based, no events) --------------------
+async function readListing(tokenId) {
+  const t = String(tokenId);
+
+  try {
+    const r = await ffQuery("reseller", MARKET_API, "getListing", { tokenId: t });
+    return parseListingStruct(unwrapFFOutput(r));
+  } catch {
+    const r2 = await ffQuery("reseller", MARKET_API, "listings", { tokenId: t });
+    return parseListingStruct(unwrapFFOutput(r2));
+  }
+}
+
 export async function getActiveListings() {
   const nextIdRes = await ffQuery("producer", NFT_API, "nextId", {});
   const nextId = Number(unwrapFFOutput(nextIdRes) || 0);
 
   const listings = [];
-
   for (let tokenId = 1; tokenId <= nextId; tokenId++) {
-    let listingResp = null;
-
     try {
-      listingResp = await ffQuery("reseller", MARKET_API, "getListing", { tokenId: String(tokenId) });
-    } catch {
-      try {
-        listingResp = await ffQuery("reseller", MARKET_API, "listings", { tokenId: String(tokenId) });
-      } catch {
-        continue;
+      const l = await readListing(tokenId);
+      if (l?.exists) {
+        listings.push({
+          tokenId: String(tokenId),
+          seller: l.seller,
+          price: l.price,
+          saleType: l.saleType,
+        });
       }
-    }
-
-    const raw = unwrapFFOutput(listingResp);
-    const parsed = parseListingStruct(raw);
-
-    if (parsed?.exists) {
-      listings.push({
-        tokenId: String(tokenId),
-        seller: parsed.seller,
-        price: parsed.price,
-        saleType: parsed.saleType,
-      });
-    }
+    } catch {}
   }
 
   return listings;
 }
 
-// -------------------- MARKET ACTIONS --------------------
 export async function listPrimary(role, tokenId, price) {
-  if (normalizeRole(role) !== "producer") throw new Error("Only producer can list primary");
+  if (String(role).toLowerCase() !== "producer") {
+    throw new Error("Only producer can list primary");
+  }
   return ffInvoke("producer", MARKET_API, "listPrimary", {
     tokenId: String(tokenId),
     price: String(price),
@@ -98,94 +109,66 @@ export async function listPrimary(role, tokenId, price) {
 }
 
 export async function listSecondary(role, tokenId, price) {
-  if (normalizeRole(role) !== "reseller") throw new Error("Only reseller can list secondary");
+  if (String(role).toLowerCase() !== "reseller") {
+    throw new Error("Only reseller can list secondary");
+  }
   return ffInvoke("reseller", MARKET_API, "listSecondary", {
     tokenId: String(tokenId),
     price: String(price),
   });
 }
 
-export async function buy(role, tokenId) {
-  const r = normalizeRole(role);
-  if (r !== "reseller" && r !== "consumer") throw new Error("Only reseller/consumer can buy");
-  return ffInvoke(r, MARKET_API, "buy", { tokenId: String(tokenId) });
-}
-
 export async function certify(role, tokenId) {
-  if (normalizeRole(role) !== "reseller") throw new Error("Only reseller can certify");
+  if (String(role).toLowerCase() !== "reseller") {
+    throw new Error("Only reseller can certify");
+  }
   return ffInvoke("reseller", NFT_API, "certify", { tokenId: String(tokenId) });
 }
 
-// -------------------- COIN HELPERS --------------------
-function validateAddress(addr, label = "address") {
-  const s = String(addr || "").trim();
-  if (!/^0x[a-fA-F0-9]{40}$/.test(s)) {
-    throw new Error(`Invalid ${label}: '${addr}'. Expected 0x + 40 hex chars.`);
-  }
-  return s;
-}
-
-function validateUint(v, label = "value") {
-  const s = String(v ?? "").trim();
-  if (!/^\d+$/.test(s)) {
-    throw new Error(`Invalid ${label}: '${v}'. Expected numeric string uint256.`);
-  }
-  return s;
-}
-
-export async function approveLux(role, spender, amount) {
-  const r = normalizeRole(role);
+export async function approveLux(role, amountWei) {
+  const r = String(role || "").toLowerCase();
   if (r !== "reseller" && r !== "consumer") {
     throw new Error("Only reseller/consumer can approve");
   }
 
-  const s = validateAddress(spender, "spender");
-  const value = validateUint(amount, "amount");
+  const spender = resolveWatchMarketAddress();
+  const value = String(amountWei ?? "").trim();
+  if (!/^\d+$/.test(value)) {
+    throw new Error("approveLux: amountWei deve essere numeric string (wei)");
+  }
 
-  // ERC20 approve(address spender, uint256 value)
-  return ffInvoke(r, COIN_API, "approve", {
-    spender: s,
-    value: value,
-  });
+  // log utile
+  console.log("APPROVE LUX:", { role: r, spender, value });
+
+  return ffInvoke(r, LUX_API, "approve", { spender, value });
 }
 
-export async function approveLuxMax(role, spender) {
-  const r = normalizeRole(role);
+export async function buy(role, tokenId) {
+  const r = String(role || "").toLowerCase();
   if (r !== "reseller" && r !== "consumer") {
-    throw new Error("Only reseller/consumer can approve");
+    throw new Error("Only reseller/consumer can buy");
   }
 
-  const s = validateAddress(spender, "spender");
+  const l = await readListing(tokenId);
+  if (!l?.exists) {
+    throw new Error(`Listing non attivo per tokenId ${tokenId}`);
+  }
 
-  // uint256 max = 2^256 - 1
-  const MAX =
-    "115792089237316195423570985008687907853269984665640564039457584007913129639935";
+  await approveLux(r, l.price);
 
-  return ffInvoke(r, COIN_API, "approve", {
-    spender: s,
-    value: MAX,
-  });
+  return ffInvoke(r, MARKET_API, "buy", { tokenId: String(tokenId) });
 }
 
-export async function coinBalance(role, account) {
-  const r = normalizeRole(role);
-  if (r !== "producer" && r !== "reseller" && r !== "consumer") {
-    throw new Error("Invalid role");
-  }
-  const a = validateAddress(account, "account");
-  // ERC20 balanceOf(address account)
-  const res = await ffQuery(r, COIN_API, "balanceOf", { account: a });
-  return String(unwrapFFOutput(res) ?? "0");
-}
+export async function mintNft(to) {
+  const recipient = String(to || "").trim();
 
-export async function coinAllowance(role, owner, spender) {
-  const r = normalizeRole(role);
-  if (r !== "producer" && r !== "reseller" && r !== "consumer") {
-    throw new Error("Invalid role");
+  // se "to" non è passato, mintiamo direttamente al producer address whitelisted
+  const fallbackTo = String(process.env.PRODUCER_ADDR || "").trim();
+  const finalTo = recipient || fallbackTo;
+
+  if (!/^0x[a-fA-F0-9]{40}$/.test(finalTo)) {
+    throw new Error("mintNft: missing/invalid 'to' address (and PRODUCER_ADDR not set)");
   }
-  const o = validateAddress(owner, "owner");
-  const s = validateAddress(spender, "spender");
-  // ERC20 allowance(address owner, address spender)
-  const res = await ffQuery(r, COIN_API, "allowance", { owner: o, spender: s });
-  return String(unwrapFFOutput(res) ?? "0");
+
+  return ffInvoke("producer", NFT_API, "manufacture", { to: finalTo });
 }

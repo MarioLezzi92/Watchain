@@ -1,29 +1,25 @@
-// frontend/app/src/lib/auth.js
-const BASE = (import.meta.env.VITE_BACKEND_BASE || "http://localhost:3001").replace(/\/$/, "");
-
-function loginMessage(nonce) {
-  return `Login to WatchDApp\nNonce: ${nonce}`;
-}
-
 export async function metamaskLogin() {
   if (!window.ethereum) throw new Error("MetaMask non trovato");
 
-  const [address] = await window.ethereum.request({ method: "eth_requestAccounts" });
+  const [address] = await window.ethereum.request({
+    method: "eth_requestAccounts",
+  });
 
   // 1) nonce dal backend
-  const nonceRes = await fetch(`${BASE}/auth/nonce?address=${address}`);
+  const base = import.meta.env.VITE_BACKEND_BASE || "http://localhost:3001";
+  const nonceRes = await fetch(`${base}/auth/nonce?address=${address}`);
   if (!nonceRes.ok) throw new Error("Errore nonce");
   const { nonce } = await nonceRes.json();
 
   // 2) firma
-  const message = loginMessage(nonce);
+  const message = `Login to WatchDApp\nNonce: ${nonce}`;
   const signature = await window.ethereum.request({
     method: "personal_sign",
     params: [message, address],
   });
 
   // 3) login -> JWT (role deciso dal backend)
-  const loginRes = await fetch(`${BASE}/auth/login`, {
+  const loginRes = await fetch(`${base}/auth/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ address, signature }),

@@ -1,4 +1,3 @@
-// backend/src/firefly.js
 import axios from "axios";
 
 function normalizeRole(role) {
@@ -13,41 +12,37 @@ function getBase(role) {
     consumer: process.env.FF_CONSUMER_BASE,
   }[r];
 
-  if (!base) throw new Error(`Unknown role '${role}' (missing FF_*_BASE?)`);
-  return String(base).replace(/\/$/, "");
+  if (!base) throw new Error(`Unknown role '${role}'`);
+  return String(base).replace(/\/+$/, "");
 }
 
 /**
- * INVOKE (tx): POST /apis/{api}/invoke/{method}
- * payload: { input, key? }
+ * INVOKE (tx): FireFly richiede spesso "key" e "input"
+ * - key: usala se la tua API la usa (spesso non serve, ma non fa male)
+ * - input: gli argomenti del metodo.
  */
-export async function ffInvoke(role, apiName, method, input = {}, key = undefined) {
+export async function ffInvoke(role, apiName, method, input = {}, key = "") {
   const base = getBase(role);
   const url = `${base}/apis/${apiName}/invoke/${method}`;
 
-  const payload = { input };
-  if (key !== undefined && key !== null && String(key) !== "") payload.key = String(key);
+  const payload = {
+    input,
+  };
 
-  const { data } = await axios.post(url, payload, {
-    headers: { "Content-Type": "application/json" },
-  });
+  // key opzionale: se vuota, FireFly in genere la ignora.
+  if (key !== undefined && key !== null) payload.key = String(key);
 
+  const { data } = await axios.post(url, payload);
   return data;
 }
 
 /**
- * QUERY (read-only): POST /apis/{api}/query/{method}
- * payload: { input }
+ * QUERY (read-only)
  */
 export async function ffQuery(role, apiName, method, input = {}) {
   const base = getBase(role);
   const url = `${base}/apis/${apiName}/query/${method}`;
 
-  const { data } = await axios.post(
-    url,
-    { input },
-    { headers: { "Content-Type": "application/json" } }
-  );
-
+  const { data } = await axios.post(url, { input });
   return data;
 }
