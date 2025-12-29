@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { apiGet, apiPost } from "../lib/api";
 import { getAddress } from "../lib/auth";
 
@@ -11,6 +11,10 @@ export default function Consumer({ address, onLogout }) {
   const [listError, setListError] = useState("");
   const [listings, setListings] = useState([]);
 
+  // Balance
+  const [balanceLux, setBalanceLux] = useState("-");
+  const [balLoading, setBalLoading] = useState(false);
+
   const me = useMemo(() => address || getAddress() || "-", [address]);
 
   const logout = () => {
@@ -19,6 +23,18 @@ export default function Consumer({ address, onLogout }) {
     localStorage.removeItem("role");
     if (typeof onLogout === "function") onLogout();
     else window.location.reload();
+  };
+
+  const refreshBalance = async () => {
+    setBalLoading(true);
+    try {
+      const b = await apiGet("/wallet/balance");
+      setBalanceLux(String(b?.lux ?? "-"));
+    } catch {
+      setBalanceLux("?");
+    } finally {
+      setBalLoading(false);
+    }
   };
 
   const refreshInventory = async () => {
@@ -50,12 +66,18 @@ export default function Consumer({ address, onLogout }) {
     }
   };
 
+  useEffect(() => {
+    refreshBalance();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const doBuy = async (tokenId) => {
     try {
       await apiPost("/market/buy", { tokenId: String(tokenId) });
       await refreshListings();
       await refreshInventory();
-      alert(`Acquisto avviato per tokenId ${tokenId} (controlla Events/Inventory).`);
+      await refreshBalance();
+      alert(`Acquisto avviato per tokenId ${tokenId}.`);
     } catch (e) {
       alert(String(e.message || e));
     }
@@ -66,46 +88,33 @@ export default function Consumer({ address, onLogout }) {
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
         <div>
           <h1 style={{ fontSize: 56, margin: 0, lineHeight: 1.05 }}>Consumer Dashboard</h1>
+
           <div style={{ marginTop: 10, opacity: 0.9 }}>
+            Logged as: <b>{me}</b>
+          </div>
+
+          <div style={{ marginTop: 10, opacity: 0.9, display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
             <div>
-              Logged as: <b>{me}</b>
+              Balance: <b>{balanceLux}</b> LUX
             </div>
+            <button onClick={refreshBalance} disabled={balLoading} style={{ ...btn(balLoading), padding: "8px 12px" }}>
+              {balLoading ? "..." : "Refresh balance"}
+            </button>
           </div>
         </div>
 
-        <button
-          onClick={logout}
-          style={{
-            background: "#111",
-            border: "1px solid #222",
-            color: "white",
-            padding: "12px 18px",
-            borderRadius: 10,
-            cursor: "pointer",
-          }}
-        >
+        <button onClick={logout} style={btn()}>
           Logout
         </button>
       </div>
 
       <div style={{ marginTop: 34 }}>
-        <h2 style={{ marginBottom: 8 }}>Inventory (live)</h2>
+        <h2 style={{ marginBottom: 8 }}>Inventory</h2>
 
         {invError ? <div style={{ color: "#ff4d4f", marginBottom: 12 }}>{invError}</div> : null}
 
-        <button
-          onClick={refreshInventory}
-          disabled={invLoading}
-          style={{
-            background: "#111",
-            border: "1px solid #222",
-            color: "white",
-            padding: "12px 18px",
-            borderRadius: 10,
-            cursor: invLoading ? "not-allowed" : "pointer",
-          }}
-        >
-          {invLoading ? "Loading..." : "Refresh"}
+        <button onClick={refreshInventory} disabled={invLoading} style={btn(invLoading)}>
+          {invLoading ? "Loading..." : "Refresh inventory"}
         </button>
 
         <ul style={{ marginTop: 16, opacity: 0.9 }}>
@@ -114,8 +123,8 @@ export default function Consumer({ address, onLogout }) {
           ) : (
             inventory.map((it, idx) => (
               <li key={`${it.tokenId ?? idx}-${idx}`} style={{ marginBottom: 8 }}>
-                <b>tokenId:</b> {String(it.tokenId)} | <b>owner:</b> {String(it.owner)} |{" "}
-                <b>certified:</b> <b>{String(it.certified)}</b>
+                <b>tokenId:</b> {String(it.tokenId)} | <b>owner:</b> {String(it.owner)} | <b>certified:</b>{" "}
+                <b>{String(it.certified)}</b>
               </li>
             ))
           )}
@@ -129,18 +138,7 @@ export default function Consumer({ address, onLogout }) {
 
         {listError ? <div style={{ color: "#ff4d4f", marginBottom: 12 }}>{listError}</div> : null}
 
-        <button
-          onClick={refreshListings}
-          disabled={listLoading}
-          style={{
-            background: "#111",
-            border: "1px solid #fff",
-            color: "white",
-            padding: "12px 18px",
-            borderRadius: 10,
-            cursor: listLoading ? "not-allowed" : "pointer",
-          }}
-        >
+        <button onClick={refreshListings} disabled={listLoading} style={{ ...btn(listLoading), border: "1px solid #fff" }}>
           {listLoading ? "Loading..." : "Refresh listings"}
         </button>
 
@@ -154,18 +152,7 @@ export default function Consumer({ address, onLogout }) {
                   <b>tokenId:</b> {String(l.tokenId ?? "-")} | <b>seller:</b> {String(l.seller ?? "-")} |{" "}
                   <b>price:</b> {String(l.price ?? "-")} | <b>saleType:</b> {String(l.saleType ?? "-")}
                 </div>
-                <button
-                  onClick={() => doBuy(l.tokenId)}
-                  style={{
-                    marginTop: 8,
-                    background: "#111",
-                    border: "1px solid #222",
-                    color: "white",
-                    padding: "10px 14px",
-                    borderRadius: 10,
-                    cursor: "pointer",
-                  }}
-                >
+                <button onClick={() => doBuy(l.tokenId)} style={{ ...btn(), marginTop: 8 }}>
                   Compra
                 </button>
               </li>
@@ -175,4 +162,15 @@ export default function Consumer({ address, onLogout }) {
       </div>
     </div>
   );
+}
+
+function btn(disabled = false) {
+  return {
+    background: "#111",
+    border: "1px solid #222",
+    color: "white",
+    padding: "12px 18px",
+    borderRadius: 10,
+    cursor: disabled ? "not-allowed" : "pointer",
+  };
 }

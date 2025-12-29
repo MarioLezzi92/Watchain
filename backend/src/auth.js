@@ -1,6 +1,7 @@
 import crypto from "crypto";
 import jwt from "jsonwebtoken";
 import { ethers } from "ethers";
+import { ensureFundedOnLogin } from "./wallet.js";
 
 const JWT_SECRET = process.env.JWT_SECRET || "dev-secret-change-me";
 
@@ -95,6 +96,7 @@ export function requireAuth(req, res, next) {
       return res.status(401).json({ error: "missing token" });
     }
 
+    
     const payload = jwt.verify(token, JWT_SECRET);
     req.user = payload; // { sub, role, iat, exp }
     return next();

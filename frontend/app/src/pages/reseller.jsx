@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { apiGet, apiPost } from "../lib/api";
 import { getAddress } from "../lib/auth";
 
@@ -13,6 +13,10 @@ export default function Reseller({ address, onLogout }) {
 
   const [secondaryPriceLux, setSecondaryPriceLux] = useState("20");
 
+  // Balance
+  const [balanceLux, setBalanceLux] = useState("-");
+  const [balLoading, setBalLoading] = useState(false);
+
   const me = useMemo(() => address || getAddress() || "-", [address]);
 
   const logout = () => {
@@ -21,6 +25,18 @@ export default function Reseller({ address, onLogout }) {
     localStorage.removeItem("role");
     if (typeof onLogout === "function") onLogout();
     else window.location.reload();
+  };
+
+  const refreshBalance = async () => {
+    setBalLoading(true);
+    try {
+      const b = await apiGet("/wallet/balance");
+      setBalanceLux(String(b?.lux ?? "-"));
+    } catch {
+      setBalanceLux("?");
+    } finally {
+      setBalLoading(false);
+    }
   };
 
   const refreshInventory = async () => {
@@ -51,6 +67,11 @@ export default function Reseller({ address, onLogout }) {
     }
   };
 
+  useEffect(() => {
+    refreshBalance();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const toWei18 = (lux) => {
     const n = String(lux || "").trim();
     if (!n) return "0";
@@ -64,6 +85,7 @@ export default function Reseller({ address, onLogout }) {
       alert(`Acquisto avviato per tokenId ${tokenId}.`);
       await refreshListings();
       await refreshInventory();
+      await refreshBalance();
     } catch (e) {
       alert(String(e.message || e));
     }
@@ -90,32 +112,42 @@ export default function Reseller({ address, onLogout }) {
     }
   };
 
+  const doCancel = async (tokenId) => {
+    try {
+      await apiPost("/market/cancelListing", { tokenId: String(tokenId) });
+      alert(`Listing cancellato per tokenId ${tokenId}.`);
+      await refreshListings();
+    } catch (e) {
+      alert(String(e.message || e));
+    }
+  };
+
   const primaryListings = listings.filter((x) => String(x.saleType).toUpperCase() === "PRIMARY");
   const secondaryListings = listings.filter((x) => String(x.saleType).toUpperCase() === "SECONDARY");
+
+  const isMineSeller = (seller) => String(seller || "").toLowerCase() === String(me || "").toLowerCase();
 
   return (
     <div style={{ padding: 32, color: "#fff" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
         <div>
           <h1 style={{ fontSize: 56, margin: 0, lineHeight: 1.05 }}>Reseller Dashboard</h1>
+
           <div style={{ marginTop: 10, opacity: 0.9 }}>
+            Logged as: <b>{me}</b>
+          </div>
+
+          <div style={{ marginTop: 10, opacity: 0.9, display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
             <div>
-              Logged as: <b>{me}</b>
+              Balance: <b>{balanceLux}</b> LUX
             </div>
+            <button onClick={refreshBalance} disabled={balLoading} style={{ ...btn(balLoading), padding: "8px 12px" }}>
+              {balLoading ? "..." : "Refresh balance"}
+            </button>
           </div>
         </div>
 
-        <button
-          onClick={logout}
-          style={{
-            background: "#111",
-            border: "1px solid #222",
-            color: "white",
-            padding: "12px 18px",
-            borderRadius: 10,
-            cursor: "pointer",
-          }}
-        >
+        <button onClick={logout} style={btn()}>
           Logout
         </button>
       </div>
@@ -125,18 +157,7 @@ export default function Reseller({ address, onLogout }) {
 
         {listError ? <div style={{ color: "#ff4d4f", marginBottom: 12 }}>{listError}</div> : null}
 
-        <button
-          onClick={refreshListings}
-          disabled={listLoading}
-          style={{
-            background: "#111",
-            border: "1px solid #fff",
-            color: "white",
-            padding: "12px 18px",
-            borderRadius: 10,
-            cursor: listLoading ? "not-allowed" : "pointer",
-          }}
-        >
+        <button onClick={refreshListings} disabled={listLoading} style={{ ...btn(listLoading), border: "1px solid #fff" }}>
           {listLoading ? "Loading..." : "Refresh listings"}
         </button>
 
@@ -147,21 +168,10 @@ export default function Reseller({ address, onLogout }) {
             primaryListings.map((l, idx) => (
               <li key={`${l.tokenId}-${idx}`} style={{ marginBottom: 12 }}>
                 <div>
-                  <b>tokenId:</b> {String(l.tokenId)} | <b>seller:</b> {String(l.seller)} |{" "}
-                  <b>price:</b> {String(l.price)} | <b>saleType:</b> {String(l.saleType)}
+                  <b>tokenId:</b> {String(l.tokenId)} | <b>seller:</b> {String(l.seller)} | <b>price:</b>{" "}
+                  {String(l.price)} | <b>saleType:</b> {String(l.saleType)}
                 </div>
-                <button
-                  onClick={() => doBuy(l.tokenId)}
-                  style={{
-                    marginTop: 8,
-                    background: "#111",
-                    border: "1px solid #222",
-                    color: "white",
-                    padding: "10px 14px",
-                    borderRadius: 10,
-                    cursor: "pointer",
-                  }}
-                >
+                <button onClick={() => doBuy(l.tokenId)} style={{ ...btn(), marginTop: 8 }}>
                   Compra (PRIMARY)
                 </button>
               </li>
@@ -177,37 +187,14 @@ export default function Reseller({ address, onLogout }) {
 
         {invError ? <div style={{ color: "#ff4d4f", marginBottom: 12 }}>{invError}</div> : null}
 
-        <button
-          onClick={refreshInventory}
-          disabled={invLoading}
-          style={{
-            background: "#111",
-            border: "1px solid #222",
-            color: "white",
-            padding: "12px 18px",
-            borderRadius: 10,
-            cursor: invLoading ? "not-allowed" : "pointer",
-          }}
-        >
+        <button onClick={refreshInventory} disabled={invLoading} style={btn(invLoading)}>
           {invLoading ? "Loading..." : "Refresh inventory"}
         </button>
 
-        <div style={{ marginTop: 18, display: "flex", gap: 12, alignItems: "center" }}>
+        <div style={{ marginTop: 18, display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
           <div>
             <div style={{ fontSize: 12, opacity: 0.8 }}>Prezzo SECONDARY (LUX intero)</div>
-            <input
-              value={secondaryPriceLux}
-              onChange={(e) => setSecondaryPriceLux(e.target.value)}
-              placeholder="es. 20"
-              style={{
-                width: 200,
-                padding: 10,
-                borderRadius: 10,
-                border: "1px solid #222",
-                background: "#111",
-                color: "#fff",
-              }}
-            />
+            <input value={secondaryPriceLux} onChange={(e) => setSecondaryPriceLux(e.target.value)} placeholder="es. 20" style={input(220)} />
           </div>
         </div>
 
@@ -221,32 +208,12 @@ export default function Reseller({ address, onLogout }) {
                   <b>tokenId:</b> {String(it.tokenId)} | <b>certified:</b> <b>{String(it.certified)}</b>
                 </div>
 
-                <div style={{ display: "flex", gap: 10, marginTop: 8 }}>
-                  <button
-                    onClick={() => doCertify(it.tokenId)}
-                    style={{
-                      background: "#111",
-                      border: "1px solid #222",
-                      color: "white",
-                      padding: "10px 14px",
-                      borderRadius: 10,
-                      cursor: "pointer",
-                    }}
-                  >
+                <div style={{ display: "flex", gap: 10, marginTop: 8, flexWrap: "wrap" }}>
+                  <button onClick={() => doCertify(it.tokenId)} style={btn()}>
                     Certifica
                   </button>
 
-                  <button
-                    onClick={() => doListSecondary(it.tokenId)}
-                    style={{
-                      background: "#111",
-                      border: "1px solid #fff",
-                      color: "white",
-                      padding: "10px 14px",
-                      borderRadius: 10,
-                      cursor: "pointer",
-                    }}
-                  >
+                  <button onClick={() => doListSecondary(it.tokenId)} style={{ ...btn(), border: "1px solid #fff" }}>
                     Lista SECONDARY
                   </button>
                 </div>
@@ -265,9 +232,17 @@ export default function Reseller({ address, onLogout }) {
             <li>Nessun listing SECONDARY attivo.</li>
           ) : (
             secondaryListings.map((l, idx) => (
-              <li key={`${l.tokenId}-s-${idx}`} style={{ marginBottom: 10 }}>
-                <b>tokenId:</b> {String(l.tokenId)} | <b>seller:</b> {String(l.seller)} |{" "}
-                <b>price:</b> {String(l.price)} | <b>saleType:</b> {String(l.saleType)}
+              <li key={`${l.tokenId}-s-${idx}`} style={{ marginBottom: 12 }}>
+                <div>
+                  <b>tokenId:</b> {String(l.tokenId)} | <b>seller:</b> {String(l.seller)} | <b>price:</b>{" "}
+                  {String(l.price)} | <b>saleType:</b> {String(l.saleType)}
+                </div>
+
+                {isMineSeller(l.seller) ? (
+                  <button onClick={() => doCancel(l.tokenId)} style={{ ...btn(), marginTop: 8 }}>
+                    Cancel listing
+                  </button>
+                ) : null}
               </li>
             ))
           )}
@@ -275,4 +250,26 @@ export default function Reseller({ address, onLogout }) {
       </div>
     </div>
   );
+}
+
+function btn(disabled = false) {
+  return {
+    background: "#111",
+    border: "1px solid #222",
+    color: "white",
+    padding: "12px 18px",
+    borderRadius: 10,
+    cursor: disabled ? "not-allowed" : "pointer",
+  };
+}
+
+function input(w) {
+  return {
+    width: w,
+    padding: 10,
+    borderRadius: 10,
+    border: "1px solid #222",
+    background: "#111",
+    color: "#fff",
+  };
 }

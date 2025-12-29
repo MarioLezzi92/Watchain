@@ -18,6 +18,9 @@
     "typescript": "~5.8.0"
   },
   "dependencies": {
-    "@openzeppelin/contracts": "^5.4.0"
+    "@openzeppelin/contracts": "^5.4.0",
+    "axios": "^1.13.2",
+    "axos": "^0.0.1",
+    "dotenv": "^17.2.3"
   }
 }

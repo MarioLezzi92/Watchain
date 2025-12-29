@@ -1,7 +1,29 @@
 import { ffQuery } from "./firefly.js";
 
 function lc(x) {
-  return String(x || "").toLowerCase();
+  return String(x || "").toLowerCase().trim();
+}
+
+function unwrapFFOutput(resp) {
+  if (!resp) return undefined;
+  const out = resp.output ?? resp.result ?? resp.data ?? resp;
+  if (out == null) return undefined;
+
+  if (typeof out === "string" || typeof out === "number" || typeof out === "boolean") return out;
+  if (Array.isArray(out)) return out[0];
+
+  if (typeof out === "object") {
+    const keys = Object.keys(out);
+    if (keys.length === 1) return out[keys[0]];
+    return out;
+  }
+  return undefined;
+}
+
+function parseBool(v) {
+  if (typeof v === "boolean") return v;
+  const s = String(v || "").trim().toLowerCase();
+  return s === "true" || s === "1";
 }
 
 async function ffQueryWithFallback(role, apiName, method, tokenId) {
@@ -11,21 +33,12 @@ async function ffQueryWithFallback(role, apiName, method, tokenId) {
   try {
     return await ffQuery(role, apiName, method, { tokenId: t });
   } catch (e1) {
-    const msg1 = JSON.stringify(e1?.response?.data || e1?.message || "");
     // 2) forma anonima { "": tokenId }
     try {
       return await ffQuery(role, apiName, method, { "": t });
     } catch (e2) {
-      const msg2 = JSON.stringify(e2?.response?.data || e2?.message || "");
       // 3) forma posizionale { "0": tokenId }
-      try {
-        return await ffQuery(role, apiName, method, { "0": t });
-      } catch (e3) {
-        const last = e3?.response?.data || e3?.message || e3;
-        throw new Error(
-          `Query fallback failed for ${method}(${t}). First=${msg1} Second=${msg2} Last=${JSON.stringify(last)}`
-        );
-      }
+      return await ffQuery(role, apiName, method, { "0": t });
     }
   }
 }
@@ -35,7 +48,7 @@ export async function buildInventory(role, address) {
   const items = [];
 
   const nextIdRes = await ffQuery(role, "WatchNFT_API", "nextId", {});
-  const nextId = Number(nextIdRes?.output || 0);
+  const nextId = Number(unwrapFFOutput(nextIdRes) || 0);
 
   // tokenId 0 non esiste -> parti da 1
   for (let i = 1; i <= nextId; i++) {
@@ -43,8 +56,8 @@ export async function buildInventory(role, address) {
       const ownerRes = await ffQueryWithFallback(role, "WatchNFT_API", "ownerOf", i);
       const certRes = await ffQueryWithFallback(role, "WatchNFT_API", "certified", i);
 
-      const owner = lc(ownerRes?.output || "");
-      const certified = String(certRes?.output || "false");
+      const owner = lc(unwrapFFOutput(ownerRes) || "");
+      const certified = parseBool(unwrapFFOutput(certRes));
 
       if (owner !== addr) continue;
 

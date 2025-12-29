@@ -17,20 +17,17 @@ function getBase(role) {
 }
 
 /**
- * INVOKE (tx): FireFly richiede spesso "key" e "input"
- * - key: usala se la tua API la usa (spesso non serve, ma non fa male)
- * - input: gli argomenti del metodo.
+ * INVOKE (tx): FireFly richiede spesso "input".
+ * "key" è opzionale (dipende dalla tua config/connector).
  */
 export async function ffInvoke(role, apiName, method, input = {}, key = "") {
   const base = getBase(role);
   const url = `${base}/apis/${apiName}/invoke/${method}`;
 
-  const payload = {
-    input,
-  };
+  const payload = { input };
 
   // key opzionale: se vuota, FireFly in genere la ignora.
-  if (key !== undefined && key !== null) payload.key = String(key);
+  if (key !== undefined && key !== null && String(key).length > 0) payload.key = String(key);
 
   const { data } = await axios.post(url, payload);
   return data;

@@ -1,6 +1,7 @@
 // backend/src/routes.js
 import express from "express";
 import { requireAuth } from "./auth.js";
+import { getLuxBalanceWei, weiToLuxString } from "./wallet.js";
 import { buildInventory } from "./inventory.js";
 import {
   getActiveListings,
@@ -9,7 +10,20 @@ import {
   buy,
   certify,
   approveLux,
-  mintNft, // NEW
+  mintNft,
+
+  // NEW (security patterns + pull payments)
+  cancelListing,
+  withdraw,
+  pauseNft,
+  unpauseNft,
+  pauseMarket,
+  unpauseMarket,
+  setReseller,
+  recoverETH,
+  recoverERC20,
+  transferLux,
+  fundWhitelist
 } from "./market.js";
 
 const router = express.Router();
@@ -22,6 +36,21 @@ router.get("/debug/config", (req, res) => {
     resellerBase: process.env.FF_RESELLER_BASE,
     consumerBase: process.env.FF_CONSUMER_BASE,
   });
+});
+
+router.get("/wallet/balance", requireAuth, async (req, res) => {
+  try {
+    const address = req.user?.sub;
+    const wei = await getLuxBalanceWei(address);
+    res.json({
+      address,
+      wei,
+      lux: weiToLuxString(wei),
+    });
+  } catch (err) {
+    console.error("BALANCE FAILED:", err?.response?.data || err?.message || err);
+    res.status(400).json({ error: String(err?.message || "balance failed") });
+  }
 });
 
 router.get("/inventory", requireAuth, async (req, res) => {
@@ -41,6 +70,7 @@ router.get("/market/listings", requireAuth, async (req, res) => {
     const role = String(req.user?.role || "").toLowerCase();
     const listings = await getActiveListings();
 
+    // consumer vede solo SECONDARY
     if (role === "consumer") {
       return res.json(listings.filter((l) => String(l.saleType).toUpperCase() === "SECONDARY"));
     }
@@ -51,7 +81,36 @@ router.get("/market/listings", requireAuth, async (req, res) => {
   }
 });
 
-// ✅ NEW: PRODUCER mint
+
+// ✅ Transfer LUX a un singolo address (producer only)
+router.post("/luxury/transfer", requireAuth, async (req, res) => {
+  try {
+    const role = req.user?.role;
+    const { to, amountLux } = req.body || {};
+    const amountWei = `${String(amountLux ?? 0).trim()}000000000000000000`;
+    const out = await transferLux(role, String(to).trim(), amountWei);
+    res.json(out);
+  } catch (err) {
+    console.error("LUX TRANSFER FAILED:", err?.response?.data || err?.message || err);
+    res.status(400).json({ error: String(err?.message || JSON.stringify(err?.response?.data || err)) });
+  }
+});
+
+// ✅ Fund automatico: 100 LUX a tutti gli account in whitelist (producer only)
+router.post("/luxury/fundWhitelist", requireAuth, async (req, res) => {
+  try {
+    const role = req.user?.role;
+    const { amountLux } = req.body || {};
+    const out = await fundWhitelist(role, amountLux ?? 100);
+    res.json({ ok: true, count: out.length, results: out });
+  } catch (err) {
+    console.error("FUND WHITELIST FAILED:", err?.response?.data || err?.message || err);
+    res.status(400).json({ error: String(err?.message || JSON.stringify(err?.response?.data || err)) });
+  }
+});
+
+
+// ✅ PRODUCER mint (WatchNFT.manufacture)
 router.post("/nft/mint", requireAuth, async (req, res) => {
   try {
     const role = String(req.user?.role || "").toLowerCase();
@@ -90,6 +149,7 @@ router.post("/market/listSecondary", requireAuth, async (req, res) => {
   }
 });
 
+// ✅ BUY: il backend fa approve + buy (PullPayments)
 router.post("/market/buy", requireAuth, async (req, res) => {
   const role = req.user?.role;
   const address = req.user?.sub;
@@ -127,6 +187,117 @@ router.post("/nft/certify", requireAuth, async (req, res) => {
     res.json(out);
   } catch (err) {
     console.error("CERTIFY FAILED:", err?.response?.data || err?.message || err);
+    res.status(400).json({ error: String(err?.message || JSON.stringify(err?.response?.data || err)) });
+  }
+});
+
+// -------------------- NEW endpoints --------------------
+
+// Cancel listing (seller = producer/reseller)
+router.post("/market/cancelListing", requireAuth, async (req, res) => {
+  try {
+    const role = req.user?.role;
+    const { tokenId } = req.body || {};
+    const out = await cancelListing(role, tokenId);
+    res.json(out);
+  } catch (err) {
+    console.error("CANCEL LISTING FAILED:", err?.response?.data || err?.message || err);
+    res.status(400).json({ error: String(err?.message || JSON.stringify(err?.response?.data || err)) });
+  }
+});
+
+// Withdraw credits (PullPayments) — seller incassa qui
+router.post("/market/withdraw", requireAuth, async (req, res) => {
+  try {
+    const role = req.user?.role;
+    const out = await withdraw(role);
+    res.json(out);
+  } catch (err) {
+    console.error("WITHDRAW FAILED:", err?.response?.data || err?.message || err);
+    res.status(400).json({ error: String(err?.message || JSON.stringify(err?.response?.data || err)) });
+  }
+});
+
+// EmergencyStop: pause/unpause NFT (onlyOwner -> producer)
+router.post("/nft/pause", requireAuth, async (req, res) => {
+  try {
+    const role = req.user?.role;
+    const out = await pauseNft(role);
+    res.json(out);
+  } catch (err) {
+    console.error("NFT PAUSE FAILED:", err?.response?.data || err?.message || err);
+    res.status(400).json({ error: String(err?.message || JSON.stringify(err?.response?.data || err)) });
+  }
+});
+
+router.post("/nft/unpause", requireAuth, async (req, res) => {
+  try {
+    const role = req.user?.role;
+    const out = await unpauseNft(role);
+    res.json(out);
+  } catch (err) {
+    console.error("NFT UNPAUSE FAILED:", err?.response?.data || err?.message || err);
+    res.status(400).json({ error: String(err?.message || JSON.stringify(err?.response?.data || err)) });
+  }
+});
+
+// EmergencyStop: pause/unpause Market (onlyOwner -> producer)
+router.post("/market/pause", requireAuth, async (req, res) => {
+  try {
+    const role = req.user?.role;
+    const out = await pauseMarket(role);
+    res.json(out);
+  } catch (err) {
+    console.error("MARKET PAUSE FAILED:", err?.response?.data || err?.message || err);
+    res.status(400).json({ error: String(err?.message || JSON.stringify(err?.response?.data || err)) });
+  }
+});
+
+router.post("/market/unpause", requireAuth, async (req, res) => {
+  try {
+    const role = req.user?.role;
+    const out = await unpauseMarket(role);
+    res.json(out);
+  } catch (err) {
+    console.error("MARKET UNPAUSE FAILED:", err?.response?.data || err?.message || err);
+    res.status(400).json({ error: String(err?.message || JSON.stringify(err?.response?.data || err)) });
+  }
+});
+
+// Whitelist reseller (WatchNFT.setReseller) — onlyOwner -> producer
+router.post("/nft/setReseller", requireAuth, async (req, res) => {
+  try {
+    const role = req.user?.role;
+    const { who, enabled } = req.body || {};
+    const out = await setReseller(role, who, enabled);
+    res.json(out);
+  } catch (err) {
+    console.error("SET RESELLER FAILED:", err?.response?.data || err?.message || err);
+    res.status(400).json({ error: String(err?.message || JSON.stringify(err?.response?.data || err)) });
+  }
+});
+
+// Recovery functions (onlyOwner whenPaused) — producer/admin
+router.post("/market/recoverETH", requireAuth, async (req, res) => {
+  try {
+    const role = req.user?.role;
+    const { to, amount } = req.body || {};
+    const out = await recoverETH(role, to, amount);
+    res.json(out);
+  } catch (err) {
+    console.error("RECOVER ETH FAILED:", err?.response?.data || err?.message || err);
+    res.status(400).json({ error: String(err?.message || JSON.stringify(err?.response?.data || err)) });
+  }
+});
+
+router.post("/market/recoverERC20", requireAuth, async (req, res) => {
+  try {
+    const role = req.user?.role;
+    const { token, to, amount } = req.body || {};
+    const out = await recoverERC20(role, token, to, amount);
+    res.json(out);
+  } catch (err) {
+    console.error("RECOVER ERC20 FAILED:", err?.response?.data || err?.message || err);
     res.status(400).json({ error: String(err?.message || JSON.stringify(err?.response?.data || err)) });
   }
 });
