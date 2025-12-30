@@ -1,30 +1,123 @@
-import { metamaskLogin } from "../lib/auth";
+import React, { useState } from "react";
+import { apiGet, apiPost } from "../lib/api";
 
-export default function Login({ onLogged }) {
+
+async function connectMetamask() {
+  if (!window.ethereum) throw new Error("MetaMask non trovato (installa l’estensione).");
+
+  const accounts = await window.ethereum.request({ method: "eth_requestAccounts" });
+  if (!accounts || accounts.length === 0) throw new Error("Nessun account MetaMask disponibile.");
+
+  const address = accounts[0];
+  return { address };
+}
+
+export default function Login() {
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState("");
+
+  const onLogin = async () => {
+    setErr("");
+    setLoading(true);
+    try {
+      // 1) Connect
+      const { address } = await connectMetamask();
+
+      // 2) Nonce
+      const { nonce } = await apiGet(`/auth/nonce?address=${address}`);
+      if (!nonce) throw new Error("Nonce non ricevuto dal backend.");
+
+      // 3) Firma
+      const message = `Login to WatchDApp\nNonce: ${nonce}`;
+      const signature = await window.ethereum.request({
+        method: "personal_sign",
+        params: [message, address],
+      });
+
+      // 4) Login
+      const res = await apiPost("/auth/login", { address, signature });
+      const token = res?.token;
+      const role = res?.role;
+
+      if (!token || !role) throw new Error("Login fallito: token/role mancanti.");
+
+      // 5) Salva sessione
+      localStorage.setItem("token", token);
+      localStorage.setItem("role", role);
+      localStorage.setItem("address", address);
+
+      // 6) REDIRECT SEMPLIFICATO: Tutti vanno al Mercato o al Profilo
+      // Non usiamo più le rotte separate /producer, /reseller, ecc.
+      window.location.href = "/market"; 
+
+    } catch (e) {
+      setErr(e?.message || String(e));
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
-    <div style={{ padding: 32, color: "#fff" }}>
-      <h1 style={{ fontSize: 48, margin: 0 }}>WatchDApp</h1>
-      <p style={{ opacity: 0.85, marginTop: 10 }}>
-        Login con MetaMask. Il backend assegna il ruolo (producer/reseller/consumer) in base alla whitelist.
-      </p>
+    // SFONDO GENERALE: Beige crema #f2e9d0
+    <div className="min-h-screen w-full bg-[#f2e9d0] flex items-center justify-center p-6">
+      
+      {/* CARD LOGIN: Bordeaux #4A0404 con ombra profonda */}
+      <div className="w-full max-w-lg bg-[#4A0404] text-[#f2e9d0] rounded-3xl shadow-2xl overflow-hidden relative border border-[#5e0a0a]">
+        
+        {/* Decorazione: Linea dorata in alto */}
+        <div className="h-2 w-full bg-[#D4AF37]"></div>
 
-      <button
-        onClick={async () => {
-          const { address } = await metamaskLogin();
-          if (typeof onLogged === "function") onLogged(address);
-        }}
-        style={{
-          marginTop: 16,
-          background: "#111",
-          border: "1px solid #fff",
-          color: "white",
-          padding: "12px 18px",
-          borderRadius: 10,
-          cursor: "pointer",
-        }}
-      >
-        Login con MetaMask
-      </button>
+        <div className="p-10 md:p-14 text-center">
+          
+          {/* Logo / Icona decorativa */}
+          <div className="mx-auto h-16 w-16 bg-[#D4AF37] rounded-full flex items-center justify-center mb-6 shadow-lg text-[#4A0404]">
+             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-8 h-8">
+               <path strokeLinecap="round" strokeLinejoin="round" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+               <path strokeLinecap="round" strokeLinejoin="round" d="M15.91 11.672a.375.375 0 010 .656l-5.603 3.113a.375.375 0 01-.557-.328V8.887c0-.286.307-.466.557-.327l5.603 3.112z" />
+             </svg>
+          </div>
+
+          <h1 className="text-5xl font-serif font-bold tracking-tight mb-2 text-white">WatchDApp</h1>
+          <p className="text-[#f2e9d0]/60 text-xs tracking-[0.2em] uppercase font-bold mb-8">
+            The Luxury Blockchain Market
+          </p>
+
+          <div className="w-12 h-px bg-[#D4AF37]/40 mx-auto mb-8"></div>
+
+          <p className="text-[#f2e9d0]/80 mb-8 font-light leading-relaxed">
+            Connect your wallet to access the exclusive marketplace. 
+            <br className="hidden sm:block"/>
+            Identity verification is handled automatically.
+          </p>
+
+          {err ? (
+            <div className="mb-6 rounded-xl border border-red-500/50 bg-red-900/30 p-4 text-red-200 text-sm animate-pulse">
+              {err}
+            </div>
+          ) : null}
+
+          <button
+            onClick={onLogin}
+            disabled={loading}
+            className="w-full py-4 px-6 rounded-xl bg-[#D4AF37] text-[#4A0404] font-bold text-lg tracking-wide hover:bg-[#c49f27] hover:scale-[1.02] active:scale-95 transition-all shadow-lg disabled:opacity-70 disabled:cursor-not-allowed flex items-center justify-center gap-3"
+          >
+            {loading ? (
+              <span>Connecting...</span>
+            ) : (
+              <>
+                <span>Connect MetaMask</span>
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3" />
+                </svg>
+              </>
+            )}
+          </button>
+
+          <div className="mt-8 text-[10px] text-[#f2e9d0]/30 font-mono">
+            Secure connection required. Please ensure MetaMask is unlocked.
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

@@ -11,8 +11,6 @@ import {
   certify,
   approveLux,
   mintNft,
-
-  // NEW (security patterns + pull payments)
   cancelListing,
   withdraw,
   pauseNft,
@@ -110,7 +108,6 @@ router.post("/luxury/fundWhitelist", requireAuth, async (req, res) => {
 });
 
 
-// ✅ PRODUCER mint (WatchNFT.manufacture)
 router.post("/nft/mint", requireAuth, async (req, res) => {
   try {
     const role = String(req.user?.role || "").toLowerCase();

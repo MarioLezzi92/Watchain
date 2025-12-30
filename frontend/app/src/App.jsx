@@ -1,37 +1,46 @@
-import { useMemo, useState } from "react";
-import Login from "./pages/login";
-import Consumer from "./pages/consumer";
-import Producer from "./pages/producer";
-import Reseller from "./pages/reseller";
+import React from "react";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import ProtectedRoute from "./app/ProtectedRoute";
 
-function getStored(key) {
-  const v = localStorage.getItem(key);
-  return v ? String(v) : "";
-}
+// Pagine rimaste (quelle vere!)
+import Login from "./pages/Login";
+import MarketPage from "./pages/MarketPage"; // La nostra Home
+import MePage from "./pages/MePage";         // La Dashboard unica
 
 export default function App() {
-  const [address, setAddress] = useState(getStored("address"));
+  return (
+    <BrowserRouter>
+      <Routes>
+        {/* Login è pubblico */}
+        <Route path="/login" element={<Login />} />
 
-  const role = useMemo(() => getStored("role").trim().toLowerCase(), [address]);
+        {/* Rotte Protette (richiedono Login) */}
+        
+        {/* La Home ("/") reindirizza subito al Market */}
+        <Route path="/" element={<Navigate to="/market" replace />} />
 
-  const handleLogout = () => {
-    localStorage.removeItem("token");
-    localStorage.removeItem("address");
-    localStorage.removeItem("role");
-    setAddress("");
-  };
+        <Route
+          path="/market"
+          element={
+            <ProtectedRoute>
+              <MarketPage />
+            </ProtectedRoute>
+          }
+        />
 
-  if (!address) {
-    return <Login onLogged={setAddress} />;
-  }
+        <Route
+          path="/me"
+          element={
+            <ProtectedRoute>
+              <MePage />
+            </ProtectedRoute>
+          }
+        />
 
-  if (role === "producer") {
-    return <Producer address={address} onLogout={handleLogout} />;
-  }
-
-  if (role === "reseller") {
-    return <Reseller address={address} onLogout={handleLogout} />;
-  }
-
-  return <Consumer address={address} onLogout={handleLogout} />;
+        {/* Qualsiasi altra rotta sconosciuta -> Torna al Market */}
+        <Route path="*" element={<Navigate to="/market" replace />} />
+        
+      </Routes>
+    </BrowserRouter>
+  );
 }

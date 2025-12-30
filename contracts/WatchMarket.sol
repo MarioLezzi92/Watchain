@@ -48,6 +48,8 @@ contract WatchMarket is Ownable, ReentrancyGuard, EmergencyStop, PullPayments {
     event ListingCancelled(uint256 indexed tokenId, address indexed seller, SaleType saleType);
     event Purchased(uint256 indexed tokenId, address indexed buyer, address indexed seller, uint256 price, SaleType saleType);
 
+    event CreditsWithdrawn(address indexed seller, uint256 amount);
+
     constructor(address coin_, address watch_) Ownable(msg.sender) PullPayments(IERC20(coin_)) {
         require(coin_ != address(0), "coin=0");
         require(watch_ != address(0), "watch=0");
@@ -55,23 +57,14 @@ contract WatchMarket is Ownable, ReentrancyGuard, EmergencyStop, PullPayments {
     }
 
     // ------------------------
-    // Emergency stop (admin)
-    // ------------------------
-    function pause() external onlyOwner {
-        _pause();
-    }
-
-    function unpause() external onlyOwner {
-        _unpause();
-    }
-
-    // ------------------------
     // Listings
     // ------------------------
+
     function listPrimary(uint256 tokenId, uint256 price) external whenNotPaused {
         require(price > 0, "price=0");
-        require(msg.sender == watch.factory(), "not factory");
         require(watch.ownerOf(tokenId) == msg.sender, "not owner");
+        require(msg.sender == watch.factory(), "only producer");
+        require(!listings[tokenId].exists, "already listed");
 
         listings[tokenId] = Listing({
             seller: msg.sender,
@@ -85,9 +78,10 @@ contract WatchMarket is Ownable, ReentrancyGuard, EmergencyStop, PullPayments {
 
     function listSecondary(uint256 tokenId, uint256 price) external whenNotPaused {
         require(price > 0, "price=0");
-        require(watch.reseller(msg.sender), "not reseller");
         require(watch.ownerOf(tokenId) == msg.sender, "not owner");
         require(watch.certified(tokenId), "not certified");
+        require(watch.reseller(msg.sender), "buyer not reseller");
+        require(!listings[tokenId].exists, "already listed");
 
         listings[tokenId] = Listing({
             seller: msg.sender,
@@ -99,7 +93,6 @@ contract WatchMarket is Ownable, ReentrancyGuard, EmergencyStop, PullPayments {
         emit Listed(tokenId, msg.sender, price, SaleType.SECONDARY);
     }
 
-    /// @notice Seller can cancel their own listing.
     function cancelListing(uint256 tokenId) external whenNotPaused {
         Listing memory l = listings[tokenId];
         require(l.exists, "not listed");
@@ -110,33 +103,43 @@ contract WatchMarket is Ownable, ReentrancyGuard, EmergencyStop, PullPayments {
     }
 
     // ------------------------
-    // Purchase flow
+    // Buy
     // ------------------------
+
     function buy(uint256 tokenId) external nonReentrant whenNotPaused {
         Listing memory l = listings[tokenId];
         require(l.exists, "not listed");
+        require(msg.sender != l.seller, "self buy");
 
+        // Access restriction by sale type
         if (l.saleType == SaleType.PRIMARY) {
             require(watch.reseller(msg.sender), "buyer not reseller");
+        } else {
+            // SECONDARY: buyer can be anyone (typically consumer), but seller must be reseller
+            require(watch.reseller(l.seller), "seller not reseller");
         }
 
-        // CEI: effects before interactions
+        // Effects
         delete listings[tokenId];
 
-        // Pull-over-push:
-        // pay to this contract, accrue credit to seller
+        // Interactions (CEI): move funds to credits, transfer NFT
+        // NOTE: PullPayments avoids push-payments DoS
         paymentToken.safeTransferFrom(msg.sender, address(this), l.price);
-        _accrueCredit(l.seller, l.price);
+        _credit(l.seller, l.price);
 
-        // Secure NFT transfer
+        // Transfer NFT
         watch.safeTransferFrom(l.seller, msg.sender, tokenId);
 
         emit Purchased(tokenId, msg.sender, l.seller, l.price, l.saleType);
     }
 
-    /// @notice Withdraw accrued LUX credits.
+    // ------------------------
+    // Withdraw (PullPayments)
+    // ------------------------
+
     function withdraw() external nonReentrant whenNotPaused returns (uint256 amount) {
-        return _withdrawCredit(msg.sender);
+        amount = _withdrawCredit(msg.sender);
+        emit CreditsWithdrawn(msg.sender, amount);
     }
 
     function getListing(uint256 tokenId) external view returns (Listing memory) {
