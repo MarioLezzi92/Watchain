@@ -25,15 +25,24 @@ export const mint = async (req, res) => {
   }
 };
 
-// POST /inventory/certify (Ex /nft/certify)
+
 export const certify = async (req, res) => {
   try {
-    const { role } = req.user;
     const { tokenId } = req.body;
-    
-    const result = await inventoryService.certifyNft(role, tokenId);
-    res.json(result);
+
+    const role = req.user.role;
+    const address = req.user.sub;
+
+    // se non è ancora reseller on-chain -> setReseller(address,true) (firmato dal producer)
+    await inventoryService.ensureReseller(address);
+
+    // ora la tx viene firmata dal reseller (address) e non reverte "only reseller"
+    const result = await inventoryService.certifyNft(role, address, tokenId);
+
+    return res.json(result);
   } catch (err) {
-    res.status(400).json({ error: err.message });
+    return res.status(400).json({ error: err.message });
   }
 };
+
+

@@ -1,24 +1,27 @@
 import express from "express";
-import { requireAuth } from "../middlewares/authMiddleware.js";
 import * as marketController from "../controllers/marketController.js";
+import { requireAuth } from "../middlewares/authMiddleware.js";
 
 const router = express.Router();
 
-// --- MODIFICA QUI SOTTO ---
-// Chiunque (anche senza login) può chiedere la lista degli orologi.
+// Rotte Pubbliche
 router.get("/listings", marketController.getListings);
 
-// --- LE ALTRE ROTTE RESTANO PROTETTE ---
-// Solo chi è loggato può comprare
-router.post("/buy", requireAuth, marketController.buy);
+// Rotte Protette (Richiedono Login)
+router.use(requireAuth);
 
-// Solo chi è loggato può vendere
-router.post("/listPrimary", requireAuth, marketController.listPrimary);
-router.post("/listSecondary", requireAuth, marketController.listSecondary);
-router.post("/cancel", requireAuth, marketController.cancelListing);
+// Nuove rotte per la sicurezza e approvazioni NFT
+router.get("/approval-status", marketController.getApprovalStatus);
+router.post("/approve-market", marketController.requestApproval);
 
-// Solo chi è loggato può vedere e prelevare i propri crediti
-router.get("/credits", requireAuth, marketController.getCredits);
-router.post("/withdraw", requireAuth, marketController.withdraw);
+// Operazioni di Mercato
+router.post("/buy", marketController.buy);
+router.post("/listPrimary", marketController.listPrimary);
+router.post("/listSecondary", marketController.listSecondary);
+router.post("/cancel", marketController.cancelListing);
+
+// Gestione Crediti (Pattern PullPayments)
+router.get("/credits", marketController.getCredits);
+router.post("/withdraw", marketController.withdraw);
 
 export default router;

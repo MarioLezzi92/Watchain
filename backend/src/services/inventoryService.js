@@ -98,9 +98,51 @@ export async function mintNft(role, toAddress) {
   return ffInvoke("producer", NFT_API, "manufacture", { to: recipient });
 }
 
-export async function certifyNft(role, tokenId) {
-  const r = normalizeRole(role);
-  if (r !== "reseller") throw new Error("Only reseller can certify");
+export function certifyNft(role, userAddress, tokenId) {
+  return ffInvoke(
+    "reseller",
+    NFT_API,
+    "certify",
+    { tokenId: String(tokenId) },
+    userAddress 
+  );
+}
 
-  return ffInvoke("reseller", NFT_API, "certify", { tokenId: String(tokenId) });
+
+
+// Aggiungi queste due funzioni nel service
+export async function checkResellerStatus(address) {
+  try {
+    const result = await ffQuery("reseller", "WatchNFT_API", "reseller", { who: address });
+
+    const out = result?.output; // può essere true, "true", { value: true }, ecc.
+    if (typeof out === "boolean") return out;
+    if (typeof out === "string") return out.toLowerCase() === "true";
+    if (out && typeof out === "object") {
+      if (typeof out.value === "boolean") return out.value;
+      if (typeof out.value === "string") return out.value.toLowerCase() === "true";
+    }
+
+    return false;
+  } catch (err) {
+    console.error("Errore query reseller:", err.message);
+    return false;
+  }
+}
+
+
+export async function enableResellerRole(resellerAddress) {
+  // USIAMO IL RUOLO PRODUCER: solo l'owner (factory) può fare setReseller [cite: 3, 10]
+  return ffInvoke("producer", "WatchNFT_API", "setReseller", { 
+    who: resellerAddress, 
+    enabled: true 
+  });
+}
+
+export async function ensureReseller(address) {
+  const isReseller = await checkResellerStatus(address);
+  if (!isReseller) {
+    await enableResellerRole(address); // producer -> setReseller(address,true)
+  }
+  return true;
 }

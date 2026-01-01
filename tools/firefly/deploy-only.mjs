@@ -6,11 +6,9 @@ import { fileURLToPath } from "url";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Root progetto = ../../ (tools/firefly -> tools -> root)
 const PROJECT_ROOT = path.resolve(__dirname, "..", "..");
 const BACKEND_ENV_PATH = path.join(PROJECT_ROOT, "backend", ".env");
 
-// Percorsi artifact hardhat
 const ARTIFACTS = {
   LuxuryCoin: path.join(PROJECT_ROOT, "artifacts", "contracts", "LuxuryCoin.sol", "LuxuryCoin.json"),
   WatchNFT: path.join(PROJECT_ROOT, "artifacts", "contracts", "WatchNFT.sol", "WatchNFT.json"),
@@ -50,10 +48,8 @@ function upsertEnvVars(envPath, newVars) {
   const updated = lines.map((line) => {
     const trimmed = line.trim();
     if (!trimmed || trimmed.startsWith("#")) return line;
-
     const idx = trimmed.indexOf("=");
     if (idx === -1) return line;
-
     const key = trimmed.slice(0, idx);
     if (key in newVars) {
       found.add(key);
@@ -65,17 +61,23 @@ function upsertEnvVars(envPath, newVars) {
   for (const [k, v] of Object.entries(newVars)) {
     if (!found.has(k)) updated.push(`${k}=${v}`);
   }
-
   fs.writeFileSync(envPath, updated.join("\n"), "utf8");
 }
 
+// FIX: Estrazione corretta del bytecode per FireFly
 function loadArtifact(p) {
   if (!fs.existsSync(p)) die(`Artifact non trovato: ${p}`);
   const j = JSON.parse(fs.readFileSync(p, "utf8"));
+  
+  // Estraiamo solo la stringa del bytecode
+  let bytecode = j.bytecode || (j.data && j.data.bytecode) || "";
+  if (typeof bytecode === 'object') bytecode = bytecode.object;
+  
   const abi = j.abi || j.definition;
-  const bytecode = j.bytecode || (j.data && j.data.bytecode) || "";
+  
+  if (!bytecode.startsWith("0x")) bytecode = "0x" + bytecode;
   if (!Array.isArray(abi) || abi.length === 0) die(`ABI mancante in: ${p}`);
-  if (!bytecode.startsWith("0x")) die(`Bytecode non valido in: ${p}`);
+  
   return { abi, bytecode };
 }
 
@@ -114,8 +116,9 @@ async function waitOperation(base, opId, timeoutMs = 300000) {
 async function deployContract({ base, fromKey, name, artifactPath, inputArgs }) {
   const { abi, bytecode } = loadArtifact(artifactPath);
 
+  // 'contract' deve essere solo la stringa del bytecode
   const resp = await ffPost(`${base}/contracts/deploy?publish=true`, {
-    contract: bytecode,
+    contract: bytecode, 
     definition: abi,
     input: inputArgs || [],
     key: fromKey,
@@ -125,35 +128,34 @@ async function deployContract({ base, fromKey, name, artifactPath, inputArgs }) 
   if (!opId) throw new Error(`[${name}] operation id non trovato`);
 
   const op = await waitOperation(base, opId);
-  const addr =
-    op?.receipt?.contractAddress ||
-    op?.output?.contractAddress ||
-    op?.receipt?.contractLocation?.address ||
-    op?.output?.contractLocation?.address;
+  const addr = op?.receipt?.contractAddress || op?.output?.contractAddress || 
+               op?.receipt?.contractLocation?.address || op?.output?.contractLocation?.address;
 
-  if (!isHexAddress(addr)) {
-    throw new Error(`[${name}] deploy succeeded ma address non trovato`);
-  }
-
+  if (!isHexAddress(addr)) throw new Error(`[${name}] deploy succeeded ma address non trovato`);
+  
+  console.log(`✅ ${name} -> ${addr}`);
   return addr;
 }
 
 async function main() {
   const env = readEnvFile(BACKEND_ENV_PATH);
-
   const base = env.FF_PRODUCER_BASE;
   const producerAddr = env.PRODUCER_ADDR;
-  const watchNftFactory = env.WATCHNFT_FACTORY || producerAddr;
+  
+  // Recuperiamo gli indirizzi per la distribuzione automatica di LUX
+  const resellerAddr = env.RESELLER_ADDR || "0x0000000000000000000000000000000000000000";
+  const consumerAddr = env.CONSUMER_ADDR || "0x0000000000000000000000000000000000000000";
 
   if (!base) die("FF_PRODUCER_BASE mancante");
   if (!isHexAddress(producerAddr)) die("PRODUCER_ADDR non valido");
-  if (!isHexAddress(watchNftFactory)) die("WATCHNFT_FACTORY non valido");
 
+  // Deploy LUXURYCOIN con i due parametri del costruttore
   const luxuryAddr = await deployContract({
     base,
     fromKey: producerAddr,
     name: "LuxuryCoin",
     artifactPath: ARTIFACTS.LuxuryCoin,
+    inputArgs: [resellerAddr, consumerAddr]
   });
 
   const watchNftAddr = await deployContract({
@@ -161,7 +163,7 @@ async function main() {
     fromKey: producerAddr,
     name: "WatchNFT",
     artifactPath: ARTIFACTS.WatchNFT,
-    inputArgs: [watchNftFactory],
+    inputArgs: [producerAddr],
   });
 
   const watchMarketAddr = await deployContract({
@@ -176,7 +178,6 @@ async function main() {
   console.log(`LUXURYCOIN_ADDRESS=${luxuryAddr}`);
   console.log(`WATCHNFT_ADDRESS=${watchNftAddr}`);
   console.log(`WATCHMARKET_ADDRESS=${watchMarketAddr}`);
-  console.log("=========================\n");
 
   upsertEnvVars(BACKEND_ENV_PATH, {
     LUXURYCOIN_ADDRESS: luxuryAddr,
@@ -184,10 +185,10 @@ async function main() {
     WATCHMARKET_ADDRESS: watchMarketAddr,
   });
 
-  console.log("backend/.env aggiornato automaticamente ✔");
+  console.log("\nbackend/.env aggiornato ✔");
 }
 
 main().catch((e) => {
-  console.error("\nFATAL:", e.message || e);
+  console.error("\nFATAL ERROR:", e.message || e);
   process.exit(1);
 });

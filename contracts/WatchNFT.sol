@@ -9,7 +9,7 @@ import "./security/EmergencyStop.sol";
 contract WatchNFT is ERC721, Ownable, EmergencyStop {
     uint256 public nextId;
 
-    /// @dev produttore: fisso, non modificabile (meno endpoint + più sicurezza)
+    /// @dev produttore: fisso, non modificabile per sicurezza
     address public immutable factory;
 
     /// @dev venditori autorizzati a certificare
@@ -63,11 +63,55 @@ contract WatchNFT is ERC721, Ownable, EmergencyStop {
         emit Manufactured(tokenId, to);
     }
 
-    /// @notice RESELLER: certifica un orologio (solo se lo possiede)
+    /// @notice RESELLER: certifica un orologio (solo se lo possiede e se è rivenditore)
     function certify(uint256 tokenId) external onlyReseller whenNotPaused {
-        require(ownerOf(tokenId) == msg.sender, "not owner");
-        require(!certified[tokenId], "already certified");
+        require(ownerOf(tokenId) == msg.sender, "Must own watch to certify");
+        require(!certified[tokenId], "Already certified");
+        
         certified[tokenId] = true;
         emit Certified(tokenId, msg.sender);
+    }
+
+    // ------------------------
+    // Gas Optimization (Memory Array Building)
+    // ------------------------
+
+    /// @notice Restituisce tutti i Token ID posseduti da un indirizzo
+    /// @dev Implementa il pattern 'Memory Array Building' per evitare loop costosi off-chain
+    function getItemsByOwner(address _owner) external view returns (uint256[] memory) {
+        uint256 totalItems = nextId; 
+        uint256 count = 0;
+
+        // Fase 1: Conta quanti oggetti possiede l'utente
+        for (uint256 i = 1; i <= totalItems; i++) {
+            // Se supporti il burning, dovresti controllare _exists(i) qui
+            // ownerOf lancia revert se il token non esiste, quindi in uno scenario senza burn è ok.
+            // In uno scenario con burn, usa try/catch o _ownerOf (se interna).
+            try this.ownerOf(i) returns (address owner) {
+                if (owner == _owner) {
+                    count++;
+                }
+            } catch {
+                // Token bruciato o non esistente, ignora
+            }
+        }
+
+        // Fase 2: Crea l'array in memoria
+        uint256[] memory result = new uint256[](count);
+        uint256 index = 0;
+
+        // Fase 3: Popola l'array
+        for (uint256 i = 1; i <= totalItems; i++) {
+            try this.ownerOf(i) returns (address owner) {
+                if (owner == _owner) {
+                    result[index] = i;
+                    index++;
+                }
+            } catch {
+                continue;
+            }
+        }
+
+        return result;
     }
 }
