@@ -2,10 +2,10 @@ import React from "react";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import ProtectedRoute from "./app/ProtectedRoute";
 
-// Pagine rimaste (quelle vere!)
-import Login from "./pages/Login";
-import MarketPage from "./pages/MarketPage"; // La nostra Home
-import MePage from "./pages/MePage";         // La Dashboard unica
+// Pagine
+import Login from "./pages/login";
+import MarketPage from "./pages/MarketPage"; 
+import MePage from "./pages/MePage";         
 
 export default function App() {
   return (
@@ -14,20 +14,16 @@ export default function App() {
         {/* Login è pubblico */}
         <Route path="/login" element={<Login />} />
 
-        {/* Rotte Protette (richiedono Login) */}
-        
-        {/* La Home ("/") reindirizza subito al Market */}
+        {/* Reindirizza la root (/) alla home pubblica (/market) */}
         <Route path="/" element={<Navigate to="/market" replace />} />
 
-        <Route
-          path="/market"
-          element={
-            <ProtectedRoute>
-              <MarketPage />
-            </ProtectedRoute>
-          }
+        {/* --- MODIFICA: Il Market ora è PUBBLICO (rimosso ProtectedRoute) --- */}
+        <Route 
+          path="/market" 
+          element={<MarketPage />} 
         />
 
+        {/* --- MODIFICA: Solo la MePage rimane PROTETTA --- */}
         <Route
           path="/me"
           element={

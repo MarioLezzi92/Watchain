@@ -9,9 +9,9 @@ import ConfirmModal from "../components/ui/ConfirmModal";
 import SuccessModal from "../components/ui/SuccessModal"; 
 import { PlusIcon, WrenchScrewdriverIcon, ArrowPathIcon, BanknotesIcon } from "@heroicons/react/24/outline";
 
-// Importiamo le nuove funzioni per i crediti
+// Importiamo le funzioni necessarie dal marketService
 import { mintWatch, listPrimary, listSecondary, certify, cancelListing, getListings, getCredits, withdrawCredits } from "../services/marketService";
-import { weiToLux } from "../lib/format"; // Assicurati di avere questo import per formattare i crediti
+import { weiToLux } from "../lib/format";
 
 function formatLuxFromWei(weiStr) {
   try {
@@ -26,7 +26,7 @@ export default function MePage() {
   const address = useMemo(() => String(localStorage.getItem("address") || ""), []);
   const [balanceLux, setBalanceLux] = useState("-");
   
-  // NUOVO STATO: Crediti pendenti (PullPayments)
+  // STATO: Crediti pendenti (PullPayments)
   const [pendingCredits, setPendingCredits] = useState("0");
 
   const [inventory, setInventory] = useState([]);
@@ -40,20 +40,16 @@ export default function MePage() {
   const [confirmModal, setConfirmModal] = useState({ isOpen: false, title: "", message: "", onConfirm: null });
   const [successModal, setSuccessModal] = useState({ isOpen: false, message: "" });
 
-  const logout = () => {
-    localStorage.clear();
-    window.location.href = "/login";
-  };
+  // ⚠️ HO CANCELLATO LA FUNZIONE logout() DA QUI.
+  // Ora userà quella di default dentro AppShell che porta a /market.
 
   const refreshBalance = async (silent = true) => {
     if (!silent) setLoadingBalance(true);
     try {
-      // 1. Saldo Wallet
       const b = await getBalance();
       setBalanceLux(String(b?.lux ?? "-"));
       
-      // 2. Crediti da Prelevare (Solo Producer/Reseller tipicamente, ma controlliamo per tutti)
-      const c = await getCredits(); // Ritorna { address, creditsWei }
+      const c = await getCredits(); 
       setPendingCredits(c?.creditsWei || "0");
       
     } catch (e) { console.error(e); } 
@@ -172,14 +168,12 @@ export default function MePage() {
     } finally { setBusy(false); }
   };
 
-  // NUOVA AZIONE: PRELIEVO
   const performWithdraw = async () => {
     setBusy(true);
     try {
       await withdrawCredits();
       setConfirmModal(prev => ({ ...prev, isOpen: false }));
-      setSuccessModal({ isOpen: true, message: "Crediti prelevati con successo! Il tuo saldo wallet si aggiornerà a breve." });
-      // Refresh dopo un po'
+      setSuccessModal({ isOpen: true, message: "Crediti prelevati con successo!" });
       setTimeout(() => refreshBalance(false), 2000);
     } catch (e) {
       setConfirmModal(prev => ({ ...prev, isOpen: false }));
@@ -227,7 +221,8 @@ export default function MePage() {
   };
 
   return (
-    <AppShell title="WatchDApp" address={address} balanceLux={balanceLux} onLogout={logout}>
+    // ⚠️ HO RIMOSSO LA PROP onLogout={logout}. ORA USA QUELLA DI APPSHELL.
+    <AppShell title="WatchDApp" address={address} balanceLux={balanceLux}>
       <div className="space-y-12">
         {/* ATELIER PRODUCER */}
         {role === "producer" && (

@@ -3,18 +3,30 @@ import * as marketService from "../services/marketService.js";
 // GET /market/listings
 export const getListings = async (req, res) => {
   try {
-    const role = String(req.user.role).toLowerCase();
+    // DEBUG: Vediamo come il backend ti vede
+    const role = req.user ? String(req.user.role).toLowerCase() : "guest (no auth)";
+    console.log(`[MarketController] Request from: ${role}`);
+    
+    // 1. Scarichiamo TUTTI gli orologi (incluso il #20 Primary)
     const listings = await marketService.getActiveListings();
 
-    // Logica di filtro: Il Consumer vede solo mercato secondario
-    if (role === "consumer") {
+    // 2. MODIFICA CRUCIALE: Disabilitiamo il filtro lato server!
+    // Lasciamo che sia il Frontend a decidere cosa nascondere.
+    // In questo modo, se il login non viene rilevato (guest), 
+    // l'orologio #20 viene comunque inviato e il Frontend (che sa di essere Producer) potrà mostrarlo.
+    
+    /* if (role === "consumer" || role === "guest") {
       const secondary = listings.filter(l => 
         String(l.saleType) === "1" || String(l.saleType).toUpperCase() === "SECONDARY"
       );
       return res.json(secondary);
     }
+    */
     
+    // Inviamo tutto a tutti (Il frontend filtrerà visivamente)
+    console.log(`[MarketController] Sending ${listings.length} items to frontend.`);
     res.json(listings);
+
   } catch (err) {
     console.error("Listings Error:", err);
     res.status(500).json({ error: "Failed to fetch listings" });
@@ -57,15 +69,6 @@ export const cancelListing = async (req, res) => {
 // POST /market/buy
 export const buy = async (req, res) => {
   try {
-    // Nota: Il frontend dovrebbe passare il prezzo per evitare lookup extra, 
-    // ma in un sistema robusto il backend dovrebbe riverificarlo. 
-    // Qui assumiamo che il client invii il tokenId e il Service gestisca l'approve.
-    // Per l'approve serve sapere quanto spendere. 
-    // Opzione A: Il frontend manda 'price'.
-    // Opzione B: Il backend fa una query 'getListing' prima di comprare.
-    // Usiamo Opzione A per semplicità (come facevi tu implicitamente), o recuperiamolo.
-    
-    // Per sicurezza, cerchiamo il listing per sapere il prezzo reale
     const listings = await marketService.getActiveListings();
     const targetItem = listings.find(l => l.tokenId === String(req.body.tokenId));
     
@@ -75,7 +78,7 @@ export const buy = async (req, res) => {
         req.user.role, 
         req.user.sub, 
         req.body.tokenId, 
-        targetItem.price // Prezzo autentico dalla chain
+        targetItem.price 
     );
     res.json(out);
   } catch (err) {

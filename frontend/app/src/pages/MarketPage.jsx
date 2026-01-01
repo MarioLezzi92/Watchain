@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from "react";
 import AppShell from "../app/AppShell";
 import usePolling from "../hooks/usePolling";
 import { getBalance } from "../services/walletService";
-import { getListings, buy, cancelListing } from "../services/marketService"; // Importiamo cancelListing
+import { getListings, buy, cancelListing } from "../services/marketService"; 
 import WatchCard from "../components/domain/WatchCard";
 import WatchDetailsModal from "../components/domain/WatchDetailsModal";
 import ConfirmModal from "../components/ui/ConfirmModal"; 
@@ -22,21 +22,23 @@ export default function MarketPage() {
   
   const [loading, setLoading] = useState(false);
   
-  // Stati Modali
   const [confirmModal, setConfirmModal] = useState({ isOpen: false, title: "", message: "", onConfirm: null });
   const [successModal, setSuccessModal] = useState({ isOpen: false, message: "" });
   const [errorModal, setErrorModal] = useState({ isOpen: false, message: "" });
 
-  const marketTitle = (role === 'consumer') ? "SECONDARY" : "PRIMARY";
+  const marketTitle = (role === '' || role === 'consumer') ? "SECONDARY" : "PRIMARY";
 
   const refreshBalance = async () => {
+    if (!address) {
+      setBalanceLux("-");
+      return;
+    }
     try {
       const b = await getBalance();
       setBalanceLux(String(b?.lux ?? "-"));
     } catch {}
   };
 
-  // --- FUNZIONE AGGIORNATA CON I FILTRI CORRETTI ---
   const refreshListings = async (silent = true) => {
     if (!silent) setLoading(true);
     try {
@@ -44,30 +46,30 @@ export default function MarketPage() {
       const arr = Array.isArray(list) ? list : [];
       
       const filtered = arr.filter(item => {
-        // Controllo base prezzo valido (deve essere > 0)
-        try { if (BigInt(item.price || "0") <= 0n) return false; } catch { return false; }
-
         const sType = String(item.saleType || "").toUpperCase();
-        
-        // --- LOGICA DI VISUALIZZAZIONE ---
+        const tokenId = item.tokenId;
+        let keep = false;
 
-        // 1. CONSUMER: Vede solo il mercato SECONDARY (venduto da Reseller)
-        if (role === 'consumer') {
-          return sType === 'SECONDARY';
+        // Controllo prezzo
+        try { 
+            if (BigInt(item.price || "0") <= 0n) return false; 
+        } catch { return false; }
+
+        // --- LOGICA DI FILTRO ---
+        if (role === '' || role === 'consumer') {
+          keep = (sType === 'SECONDARY');
+        }
+        else if (role === 'reseller') {
+          keep = (sType === 'PRIMARY');
+        }
+        else if (role === 'producer') {
+          keep = (sType === 'PRIMARY');
+        }
+        else {
+            keep = false;
         }
 
-        // 2. RESELLER: Vede solo il mercato PRIMARY (venduto da Producer)
-        // I suoi orologi in vendita (Secondary) li vede nel suo Profilo (MePage).
-        if (role === 'reseller') {
-          return sType === 'PRIMARY';
-        }
-
-        // 3. PRODUCER: Vede il mercato PRIMARY (i suoi listing)
-        if (role === 'producer') {
-          return sType === 'PRIMARY';
-        }
-
-        return true; 
+        return keep; 
       });
       
       const normalized = filtered.map(item => {
@@ -104,53 +106,46 @@ export default function MarketPage() {
 
   const handleManualRefresh = () => { refreshListings(false); };
 
-  // --- LOGICA ACQUISTO ---
   const performBuy = async (item) => {
+    if (!address) {
+      window.location.href = "/login";
+      return;
+    }
+
     setBusy(true);
     try {
       await buy(item.tokenId);
-      
       setConfirmModal(prev => ({ ...prev, isOpen: false }));
       setOpen(false); 
-      
       setSuccessModal({ isOpen: true, message: "Acquisto completato con successo! Trovi l'orologio nel tuo Inventario." });
-      
       setTimeout(() => {
           refreshListings(true);
           refreshBalance();
       }, 1000);
-
     } catch (e) {
       setConfirmModal(prev => ({ ...prev, isOpen: false }));
       console.error(e);
-
       let errorMsg = e?.response?.data?.error || e.message || "Errore sconosciuto";
       if (errorMsg.includes("transfer amount exceeds balance") || errorMsg.includes("500")) {
          errorMsg = "Fondi insufficienti per completare l'acquisto.";
       }
       setErrorModal({ isOpen: true, message: errorMsg });
-
     } finally {
       setBusy(false);
     }
   };
 
-  // --- LOGICA CANCELLAZIONE (Aggiunta) ---
   const performCancel = async (item) => {
     setBusy(true);
     try {
       await cancelListing(item.tokenId);
-      
       setConfirmModal(prev => ({ ...prev, isOpen: false }));
       setOpen(false);
-      
       setSuccessModal({ isOpen: true, message: "Listing ritirato dal mercato con successo." });
-      
       setTimeout(() => {
           refreshListings(true);
           refreshBalance();
       }, 1000);
-
     } catch (e) {
       setConfirmModal(prev => ({ ...prev, isOpen: false }));
       console.error(e);
@@ -162,6 +157,10 @@ export default function MarketPage() {
   };
 
   const handleBuyClick = (item) => {
+    if (!address) {
+        window.location.href = "/login";
+        return;
+    }
     setConfirmModal({
       isOpen: true,
       title: "Conferma Acquisto",
@@ -213,7 +212,7 @@ export default function MarketPage() {
              <p className="text-[#4A0404]/50 font-serif text-xl italic">
                {role === 'reseller' 
                  ? "Nessun orologio del Producer disponibile." 
-                 : "Nessun orologio in vendita."}
+                 : "Nessun orologio in vendita al momento."}
              </p>
           </div>
         ) : (
