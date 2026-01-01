@@ -40,7 +40,6 @@ export default function WatchCard({ item, onOpen, variant = "market" }) {
            }
         </div>
 
-        {/* 2. MODIFICA QUI (Banner inventario) */}
         {showBanner && (
           <div className="absolute bottom-0 left-0 w-full bg-[#D4AF37]/90 text-[#4A0404] text-center py-1 font-bold text-xs uppercase tracking-wider backdrop-blur-sm shadow-md">
             In Vendita {item.priceLux !== "0" ? `(${weiToLux(item.priceLux)} LUX)` : "(Errore Prezzo)"}

@@ -2,12 +2,12 @@ import React, { useState, useEffect, useMemo } from "react";
 import AppShell from "../app/AppShell";
 import usePolling from "../hooks/usePolling";
 import { getBalance } from "../services/walletService";
-import { getListings, buy } from "../services/marketService";
+import { getListings, buy, cancelListing } from "../services/marketService"; // Importiamo cancelListing
 import WatchCard from "../components/domain/WatchCard";
 import WatchDetailsModal from "../components/domain/WatchDetailsModal";
 import ConfirmModal from "../components/ui/ConfirmModal"; 
 import SuccessModal from "../components/ui/SuccessModal"; 
-import ErrorModal from "../components/ui/ErrorModal"; // <--- IMPORT NUOVO
+import ErrorModal from "../components/ui/ErrorModal";
 import { ArrowPathIcon, ShoppingCartIcon } from "@heroicons/react/24/outline";
 
 export default function MarketPage() {
@@ -25,7 +25,7 @@ export default function MarketPage() {
   // Stati Modali
   const [confirmModal, setConfirmModal] = useState({ isOpen: false, title: "", message: "", onConfirm: null });
   const [successModal, setSuccessModal] = useState({ isOpen: false, message: "" });
-  const [errorModal, setErrorModal] = useState({ isOpen: false, message: "" }); // <--- STATO ERRORE
+  const [errorModal, setErrorModal] = useState({ isOpen: false, message: "" });
 
   const marketTitle = (role === 'consumer') ? "SECONDARY" : "PRIMARY";
 
@@ -36,6 +36,7 @@ export default function MarketPage() {
     } catch {}
   };
 
+  // --- FUNZIONE AGGIORNATA CON I FILTRI CORRETTI ---
   const refreshListings = async (silent = true) => {
     if (!silent) setLoading(true);
     try {
@@ -43,16 +44,28 @@ export default function MarketPage() {
       const arr = Array.isArray(list) ? list : [];
       
       const filtered = arr.filter(item => {
+        // Controllo base prezzo valido (deve essere > 0)
         try { if (BigInt(item.price || "0") <= 0n) return false; } catch { return false; }
 
         const sType = String(item.saleType || "").toUpperCase();
+        
+        // --- LOGICA DI VISUALIZZAZIONE ---
 
-        if (role === 'reseller') {
-           const isMyItem = String(item.seller || "").toLowerCase() === String(address).toLowerCase();
-           return sType === 'PRIMARY' && !isMyItem;
+        // 1. CONSUMER: Vede solo il mercato SECONDARY (venduto da Reseller)
+        if (role === 'consumer') {
+          return sType === 'SECONDARY';
         }
-        if (role === 'consumer') return sType === 'SECONDARY';
-        if (role === 'producer') return sType === 'PRIMARY';
+
+        // 2. RESELLER: Vede solo il mercato PRIMARY (venduto da Producer)
+        // I suoi orologi in vendita (Secondary) li vede nel suo Profilo (MePage).
+        if (role === 'reseller') {
+          return sType === 'PRIMARY';
+        }
+
+        // 3. PRODUCER: Vede il mercato PRIMARY (i suoi listing)
+        if (role === 'producer') {
+          return sType === 'PRIMARY';
+        }
 
         return true; 
       });
@@ -75,7 +88,6 @@ export default function MarketPage() {
       setListings(normalized);
     } catch (e) {
       console.error("Errore Mercato:", e);
-      // Anche qui usiamo il modale se il refresh manuale fallisce
       if (!silent) setErrorModal({ isOpen: true, message: "Impossibile aggiornare il mercato: " + e.message });
     } finally {
       if (!silent) setLoading(false);
@@ -98,11 +110,9 @@ export default function MarketPage() {
     try {
       await buy(item.tokenId);
       
-      // Chiudi modali precedenti
       setConfirmModal(prev => ({ ...prev, isOpen: false }));
       setOpen(false); 
       
-      // MOSTRA SUCCESSO
       setSuccessModal({ isOpen: true, message: "Acquisto completato con successo! Trovi l'orologio nel tuo Inventario." });
       
       setTimeout(() => {
@@ -111,21 +121,41 @@ export default function MarketPage() {
       }, 1000);
 
     } catch (e) {
-      // Chiudi conferma
       setConfirmModal(prev => ({ ...prev, isOpen: false }));
       console.error(e);
 
-      // ESTRAIAMO IL MESSAGGIO D'ERRORE PULITO
       let errorMsg = e?.response?.data?.error || e.message || "Errore sconosciuto";
-      
-      // Se è il classico errore di fondi, lo rendiamo più leggibile
       if (errorMsg.includes("transfer amount exceeds balance") || errorMsg.includes("500")) {
          errorMsg = "Fondi insufficienti per completare l'acquisto.";
       }
-
-      // MOSTRA ERRORE ELEGANTE
       setErrorModal({ isOpen: true, message: errorMsg });
 
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // --- LOGICA CANCELLAZIONE (Aggiunta) ---
+  const performCancel = async (item) => {
+    setBusy(true);
+    try {
+      await cancelListing(item.tokenId);
+      
+      setConfirmModal(prev => ({ ...prev, isOpen: false }));
+      setOpen(false);
+      
+      setSuccessModal({ isOpen: true, message: "Listing ritirato dal mercato con successo." });
+      
+      setTimeout(() => {
+          refreshListings(true);
+          refreshBalance();
+      }, 1000);
+
+    } catch (e) {
+      setConfirmModal(prev => ({ ...prev, isOpen: false }));
+      console.error(e);
+      let errorMsg = e?.response?.data?.error || e.message || "Errore durante la cancellazione.";
+      setErrorModal({ isOpen: true, message: errorMsg });
     } finally {
       setBusy(false);
     }
@@ -137,6 +167,15 @@ export default function MarketPage() {
       title: "Conferma Acquisto",
       message: `Vuoi acquistare l'orologio #${item.tokenId} per ${item.priceLux} LUX?`,
       onConfirm: () => performBuy(item)
+    });
+  };
+
+  const handleCancelClick = (item) => {
+    setConfirmModal({
+      isOpen: true,
+      title: "Ritiro Orologio",
+      message: `Sei sicuro di voler ritirare l'orologio #${item.tokenId} dalla vendita?`,
+      onConfirm: () => performCancel(item)
     });
   };
 
@@ -198,11 +237,10 @@ export default function MarketPage() {
         item={selected}
         role={role}
         onBuy={handleBuyClick}
+        onCancel={handleCancelClick}
         busy={busy}
       />
 
-      {/* --- I NOSTRI MODALI --- */}
-      
       <ConfirmModal 
         isOpen={confirmModal.isOpen}
         title={confirmModal.title}
@@ -218,7 +256,6 @@ export default function MarketPage() {
         onClose={() => setSuccessModal(prev => ({ ...prev, isOpen: false }))}
       />
 
-      {/* IL NUOVO MODALE ERRORE */}
       <ErrorModal 
         isOpen={errorModal.isOpen}
         message={errorModal.message}

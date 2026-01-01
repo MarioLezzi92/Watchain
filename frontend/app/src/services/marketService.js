@@ -6,9 +6,19 @@ export async function getListings() {
   return await apiGet("/market/listings"); 
 }
 
+// --- NUOVO: PULL PAYMENTS (Crediti e Prelievi) ---
+export async function getCredits() {
+  return await apiGet("/market/credits");
+}
+
+export async function withdrawCredits() {
+  return await apiPost("/market/withdraw", {});
+}
+
 // --- SCRITTURA PRODUCER ---
 export async function mintWatch() {
-  return await apiPost("/nft/mint", {}); 
+  // ⚠️ Cambiato da /nft/mint a /inventory/mint
+  return await apiPost("/inventory/mint", {}); 
 }
 
 export async function listPrimary(tokenId, priceLux) {
@@ -20,9 +30,10 @@ export async function listPrimary(tokenId, priceLux) {
   });
 }
 
-// --- SCRITTURA RESELLER (Nuove Funzioni) ---
+// --- SCRITTURA RESELLER ---
 export async function certify(tokenId) {
-  return await apiPost("/nft/certify", { tokenId: String(tokenId) });
+  // ⚠️ Cambiato da /nft/certify a /inventory/certify
+  return await apiPost("/inventory/certify", { tokenId: String(tokenId) });
 }
 
 export async function listSecondary(tokenId, priceLux) {
@@ -40,5 +51,7 @@ export async function buy(tokenId) {
 }
 
 export async function cancelListing(tokenId) {
-  return await apiPost("/market/cancelListing", { tokenId: String(tokenId) });
+  // ⚠️ Endpoint accorciato o standardizzato nel backend v2 (check marketController)
+  // Nel backend v2 marketController.js abbiamo mappato "cancelListing" su "/market/cancel"
+  return await apiPost("/market/cancel", { tokenId: String(tokenId) });
 }

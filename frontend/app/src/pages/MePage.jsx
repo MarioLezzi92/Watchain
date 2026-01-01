@@ -7,10 +7,11 @@ import WatchCard from "../components/domain/WatchCard";
 import WatchDetailsModal from "../components/domain/WatchDetailsModal";
 import ConfirmModal from "../components/ui/ConfirmModal";
 import SuccessModal from "../components/ui/SuccessModal"; 
-import { PlusIcon, WrenchScrewdriverIcon, ArrowPathIcon } from "@heroicons/react/24/outline";
+import { PlusIcon, WrenchScrewdriverIcon, ArrowPathIcon, BanknotesIcon } from "@heroicons/react/24/outline";
 
-// Importiamo tutte le funzioni
-import { mintWatch, listPrimary, listSecondary, certify, cancelListing, getListings } from "../services/marketService";
+// Importiamo le nuove funzioni per i crediti
+import { mintWatch, listPrimary, listSecondary, certify, cancelListing, getListings, getCredits, withdrawCredits } from "../services/marketService";
+import { weiToLux } from "../lib/format"; // Assicurati di avere questo import per formattare i crediti
 
 function formatLuxFromWei(weiStr) {
   try {
@@ -24,6 +25,9 @@ export default function MePage() {
   const role = useMemo(() => String(localStorage.getItem("role") || "").toLowerCase(), []);
   const address = useMemo(() => String(localStorage.getItem("address") || ""), []);
   const [balanceLux, setBalanceLux] = useState("-");
+  
+  // NUOVO STATO: Crediti pendenti (PullPayments)
+  const [pendingCredits, setPendingCredits] = useState("0");
 
   const [inventory, setInventory] = useState([]);
   const [selected, setSelected] = useState(null);
@@ -44,8 +48,14 @@ export default function MePage() {
   const refreshBalance = async (silent = true) => {
     if (!silent) setLoadingBalance(true);
     try {
+      // 1. Saldo Wallet
       const b = await getBalance();
       setBalanceLux(String(b?.lux ?? "-"));
+      
+      // 2. Crediti da Prelevare (Solo Producer/Reseller tipicamente, ma controlliamo per tutti)
+      const c = await getCredits(); // Ritorna { address, creditsWei }
+      setPendingCredits(c?.creditsWei || "0");
+      
     } catch (e) { console.error(e); } 
     finally { if (!silent) setLoadingBalance(false); }
   };
@@ -162,22 +172,33 @@ export default function MePage() {
     } finally { setBusy(false); }
   };
 
-  // --- HANDLERS ---
+  // NUOVA AZIONE: PRELIEVO
+  const performWithdraw = async () => {
+    setBusy(true);
+    try {
+      await withdrawCredits();
+      setConfirmModal(prev => ({ ...prev, isOpen: false }));
+      setSuccessModal({ isOpen: true, message: "Crediti prelevati con successo! Il tuo saldo wallet si aggiornerà a breve." });
+      // Refresh dopo un po'
+      setTimeout(() => refreshBalance(false), 2000);
+    } catch (e) {
+      setConfirmModal(prev => ({ ...prev, isOpen: false }));
+      alert("Errore Prelievo: " + e.message);
+    } finally { setBusy(false); }
+  };
 
+  // --- HANDLERS ---
+  
   const handleMintClick = () => {
     setConfirmModal({
-        isOpen: true,
-        title: "Atelier Produzione",
-        message: "Vuoi creare (Mint) un nuovo Orologio grezzo?",
+        isOpen: true, title: "Atelier Produzione", message: "Vuoi creare (Mint) un nuovo Orologio grezzo?",
         onConfirm: performMint
     });
   };
 
   const handleCertifyClick = (item) => {
     setConfirmModal({
-      isOpen: true,
-      title: "Certificazione",
-      message: `Vuoi emettere il Certificato di Autenticità per l'orologio #${item.tokenId}?`,
+      isOpen: true, title: "Certificazione", message: `Vuoi emettere il Certificato di Autenticità per l'orologio #${item.tokenId}?`,
       onConfirm: () => performCertify(item)
     });
   };
@@ -186,19 +207,22 @@ export default function MePage() {
     if (!price || Number(price) <= 0) return alert("Inserisci un prezzo valido");
     const marketName = role === 'producer' ? "Mercato Primario" : "Mercato Secondario";
     setConfirmModal({
-        isOpen: true,
-        title: "Pubblicazione",
-        message: `Vuoi mettere in vendita l'orologio #${item.tokenId} sul ${marketName} a ${price} LUX?`,
+        isOpen: true, title: "Pubblicazione", message: `Vuoi mettere in vendita l'orologio #${item.tokenId} sul ${marketName} a ${price} LUX?`,
         onConfirm: () => performList(item, price)
     });
   };
 
   const handleCancelClick = (item) => {
     setConfirmModal({
-        isOpen: true,
-        title: "Ritiro Orologio",
-        message: `Ritirare l'orologio #${item.tokenId} dalla vendita?`,
+        isOpen: true, title: "Ritiro Orologio", message: `Ritirare l'orologio #${item.tokenId} dalla vendita?`,
         onConfirm: () => performCancel(item)
+    });
+  };
+
+  const handleWithdrawClick = () => {
+     setConfirmModal({
+        isOpen: true, title: "Incasso Crediti", message: `Vuoi trasferire ${weiToLux(pendingCredits)} LUX dal Marketplace al tuo Wallet?`,
+        onConfirm: performWithdraw
     });
   };
 
@@ -230,9 +254,10 @@ export default function MePage() {
 
         <div className="grid gap-8 lg:grid-cols-12 items-start">
           {/* PROFILO */}
-          <div className="lg:col-span-4">
+          <div className="lg:col-span-4 space-y-6">
             <div className="rounded-3xl bg-[#4A0404] text-[#FDFBF7] p-8 shadow-xl sticky top-28 border border-[#5e0a0a]">
               <div className="text-3xl font-serif font-bold tracking-wide mb-6">Il tuo Profilo</div>
+              
               <div className="space-y-4 text-sm">
                 <div className="bg-black/20 p-4 rounded-xl border border-white/5">
                   <div className="text-red-200/80 text-xs uppercase tracking-wider font-bold mb-1">Role</div>
@@ -243,10 +268,28 @@ export default function MePage() {
                   <div className="font-mono text-zinc-300 break-all text-xs">{address}</div>
                 </div>
                 <div className="bg-black/20 p-4 rounded-xl border border-white/5">
-                  <div className="text-red-200/80 text-xs uppercase tracking-wider font-bold mb-1">Saldo</div>
+                  <div className="text-red-200/80 text-xs uppercase tracking-wider font-bold mb-1">Saldo Wallet</div>
                   <div className="text-[#D4AF37] text-2xl font-bold">{balanceLux} LUX</div>
                 </div>
+
+                {/* VISUALIZZATORE CREDITI PENDENTI */}
+                {pendingCredits !== "0" && (
+                  <div className="bg-[#1A472A]/40 p-4 rounded-xl border border-[#D4AF37]/50 animate-pulse">
+                     <div className="text-[#D4AF37] text-xs uppercase tracking-wider font-bold mb-1 flex items-center gap-1">
+                        <BanknotesIcon className="h-4 w-4"/> Vendite da Incassare
+                     </div>
+                     <div className="text-white text-xl font-bold mb-3">{weiToLux(pendingCredits)} LUX</div>
+                     <button 
+                       onClick={handleWithdrawClick}
+                       disabled={busy}
+                       className="w-full py-2 bg-[#D4AF37] hover:bg-[#c49f27] text-[#4A0404] font-bold rounded-lg text-xs uppercase tracking-wide shadow-md"
+                     >
+                       Preleva Ora
+                     </button>
+                  </div>
+                )}
               </div>
+
               <div className="mt-6 flex gap-3">
                 <button
                   onClick={handleManualBalance}

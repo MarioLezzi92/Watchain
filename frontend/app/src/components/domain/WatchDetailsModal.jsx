@@ -111,7 +111,6 @@ export default function WatchDetailsModal({ open, onClose, item, role, onList, o
                         className="w-full bg-white text-[#4A0404] font-bold p-3 rounded-xl border border-[#D4AF37]/20 focus:outline-none focus:ring-2 focus:ring-[#D4AF37]"
                       />
                       <button
-                        // FIX: Passiamo direttamente inputPrice senza conversioni strane
                         onClick={() => onList && onList(item, inputPrice)}
                         disabled={!inputPrice || busy}
                         className="whitespace-nowrap px-6 bg-[#D4AF37] hover:bg-[#c49f27] text-[#4A0404] font-bold rounded-xl shadow-md transition disabled:opacity-50 uppercase text-xs tracking-wider"
