@@ -1,44 +1,29 @@
 import { ffQuery, ffInvoke } from "./fireflyService.js";
-import { unwrapFFOutput, normalizeRole, isAddress, parseBool } from "../utils/formatters.js";
+// Importiamo solo quello che serve davvero dalle nuove utility
+import { unwrapFFOutput, normalizeRole, parseBool } from "../utils/formatters.js";
 import { config } from "../config/env.js";
 
 const NFT_API = "WatchNFT_API";
 
-// --- Helpers ---
-
-// Helper potenziato per trovare il parametro giusto
-async function ffQueryWithFallback(role, apiName, method, tokenId) {
-  const t = String(tokenId);
-  
-  // Lista di tentativi per indovinare come FireFly vuole il parametro input
-  const attempts = [
-    { tokenId: t },  // Standard nome parametro
-    { "": t },       // Parametro anonimo vuoto
-    { "0": t },      // Parametro posizionale stringa
-    { arg0: t },     // Parametro generato arg0
-    { _0: t },       // Parametro generato _0
-    { key: t },      // Chiave per mapping
-    { input: t }     // Input diretto
-  ];
-
-  let lastErr;
-  for (const input of attempts) {
-    try {
-      const res = await ffQuery(role, apiName, method, input);
-      // Se otteniamo una risposta valida (non errore), la ritorniamo
-      if (res) return res;
-    } catch (e) {
-      lastErr = e;
-      // Continua col prossimo tentativo
-    }
+/**
+ * Helper per interrogare FireFly usando il parametro 'tokenId' 
+ * confermato dallo Swagger.
+ */
+async function ffQueryWithId(role, apiName, method, id) {
+  const v = String(id);
+  const input = { "": v, id: v, tokenId: v }; // Pattern universale
+  try {
+    const res = await ffQuery(role, apiName, method, input);
+    return res;
+  } catch (err) {
+    console.error(`Query Error [${method}]:`, err.message);
+    return undefined;
   }
-  // Se falliscono tutti, ritorna undefined (verrà gestito dal chiamante)
-  return undefined; 
 }
 
 async function getOwnerOf(role, tokenId) {
   try {
-    const res = await ffQueryWithFallback(role, NFT_API, "ownerOf", tokenId);
+    const res = await ffQueryWithId(role, NFT_API, "ownerOf", tokenId);
     return unwrapFFOutput(res);
   } catch {
     return null; 
@@ -47,8 +32,7 @@ async function getOwnerOf(role, tokenId) {
 
 async function getCertifiedStatus(role, tokenId) {
   try {
-    const res = await ffQueryWithFallback(role, NFT_API, "certified", tokenId);
-    // Assicuriamoci di parsare bene il booleano
+    const res = await ffQueryWithId(role, NFT_API, "certified", tokenId);
     return parseBool(unwrapFFOutput(res));
   } catch {
     return false;
@@ -57,6 +41,9 @@ async function getCertifiedStatus(role, tokenId) {
 
 // --- Funzioni Pubbliche ---
 
+/**
+ * Recupera gli NFT dell'utente corrente.
+ */
 export async function getInventory(role, userAddress) {
   const r = normalizeRole(role);
   const targetAddr = String(userAddress).toLowerCase();
@@ -67,7 +54,7 @@ export async function getInventory(role, userAddress) {
   const items = [];
 
   for (let i = 1; i <= nextId; i++) {
-    // Parallelizziamo le query per velocità
+    // Parallelizziamo le query per massimizzare la velocità
     const [ownerRaw, isCertified] = await Promise.all([
       getOwnerOf(r, i),
       getCertifiedStatus(r, i)
@@ -75,74 +62,72 @@ export async function getInventory(role, userAddress) {
 
     const owner = String(ownerRaw || "").toLowerCase();
 
-    // Filtriamo: mostriamo solo se l'utente è il proprietario
     if (owner === targetAddr) {
       items.push({
         tokenId: String(i),
         owner,
-        certified: isCertified, // Qui ora dovrebbe arrivare true!
+        certified: isCertified,
       });
     }
   }
-
   return items;
 }
 
+/**
+ * Crea un nuovo NFT (Solo Producer).
+ */
 export async function mintNft(role, toAddress) {
   const r = normalizeRole(role);
   if (r !== "producer") throw new Error("Only producer can mint");
 
   const recipient = toAddress || config.producerAddr; 
-  if (!isAddress(recipient)) throw new Error("Invalid recipient address");
-
   return ffInvoke("producer", NFT_API, "manufacture", { to: recipient });
 }
 
+/**
+ * Certifica un NFT (Richiede ruolo Reseller).
+ */
 export function certifyNft(role, userAddress, tokenId) {
+  const v = String(tokenId);
   return ffInvoke(
     "reseller",
     NFT_API,
     "certify",
-    { tokenId: String(tokenId) },
+    { "": v, id: v, tokenId: v }, // Parametri universali
     userAddress 
   );
 }
 
-
-
-// Aggiungi queste due funzioni nel service
+/**
+ * Verifica se un indirizzo è abilitato come Reseller nel contratto.
+ */
 export async function checkResellerStatus(address) {
   try {
     const result = await ffQuery("reseller", "WatchNFT_API", "reseller", { who: address });
-
-    const out = result?.output; // può essere true, "true", { value: true }, ecc.
-    if (typeof out === "boolean") return out;
-    if (typeof out === "string") return out.toLowerCase() === "true";
-    if (out && typeof out === "object") {
-      if (typeof out.value === "boolean") return out.value;
-      if (typeof out.value === "string") return out.value.toLowerCase() === "true";
-    }
-
-    return false;
+    const out = unwrapFFOutput(result);
+    return parseBool(out);
   } catch (err) {
-    console.error("Errore query reseller:", err.message);
     return false;
   }
 }
 
-
+/**
+ * Abilita un indirizzo al ruolo Reseller (Solo Producer).
+ */
 export async function enableResellerRole(resellerAddress) {
-  // USIAMO IL RUOLO PRODUCER: solo l'owner (factory) può fare setReseller [cite: 3, 10]
   return ffInvoke("producer", "WatchNFT_API", "setReseller", { 
     who: resellerAddress, 
     enabled: true 
   });
 }
 
+/**
+ * Assicura che un utente sia abilitato come Reseller prima di procedere.
+ */
 export async function ensureReseller(address) {
   const isReseller = await checkResellerStatus(address);
   if (!isReseller) {
-    await enableResellerRole(address); // producer -> setReseller(address,true)
+    await enableResellerRole(address); 
   }
   return true;
 }

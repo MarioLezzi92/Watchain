@@ -24,7 +24,7 @@ import {
   getCredits,
   withdrawCredits,
 } from "../services/marketService";
-import { weiToLux } from "../lib/format";
+
 
 function formatLuxFromWei(weiStr) {
   try {
@@ -317,7 +317,7 @@ export default function MePage() {
     setConfirmModal({
       isOpen: true,
       title: "Incasso Crediti",
-      message: `Vuoi trasferire ${weiToLux(pendingCredits)} LUX dal Marketplace al tuo Wallet?`,
+      message: `Vuoi trasferire ${pendingCredits} LUX dal Marketplace al tuo Wallet?`,
       onConfirm: performWithdraw,
       onClose: () => setConfirmModal((prev) => ({ ...prev, isOpen: false })),
     });
@@ -380,7 +380,7 @@ export default function MePage() {
                     <div className="text-[#D4AF37] text-xs uppercase tracking-wider font-bold mb-1 flex items-center gap-1">
                       <BanknotesIcon className="h-4 w-4" /> Vendite da Incassare
                     </div>
-                    <div className="text-white text-xl font-bold mb-3">{weiToLux(pendingCredits)} LUX</div>
+                    <div className="text-white text-xl font-bold mb-3">{pendingCredits} LUX</div>
                     <button
                       onClick={handleWithdrawClick}
                       disabled={busy}

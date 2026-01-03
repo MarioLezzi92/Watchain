@@ -1,7 +1,3 @@
-import React from "react";
-// 1. IMPORTA LA FUNZIONE QUI SOTTO:
-import { weiToLux } from "../../lib/format"; 
-
 const CERT_IMG = "/watch-certified.jpg";
 const UNCERT_IMG = "/watch-uncertified.jpg";
 
@@ -42,7 +38,7 @@ export default function WatchCard({ item, onOpen, variant = "market" }) {
 
         {showBanner && (
           <div className="absolute bottom-0 left-0 w-full bg-[#D4AF37]/90 text-[#4A0404] text-center py-1 font-bold text-xs uppercase tracking-wider backdrop-blur-sm shadow-md">
-            In Vendita {item.priceLux !== "0" ? `(${weiToLux(item.priceLux)} LUX)` : "(Errore Prezzo)"}
+            In Vendita {item.priceLux !== "0" ? `(${item.priceLux} LUX)` : "(Errore Prezzo)"}
           </div>
         )}
       </div>
@@ -59,7 +55,7 @@ export default function WatchCard({ item, onOpen, variant = "market" }) {
         <div className="mt-4 flex items-center justify-end h-6">
            {isListed ? (
              <span className="text-[#D4AF37] font-bold text-xl">
-               {weiToLux(item.priceLux)} <span className="text-xs text-red-100/50 font-normal">LUX</span>
+               {item.priceLux} <span className="text-xs text-red-100/50 font-normal">LUX</span>
              </span>
            ) : (
              <span className="text-white/20 text-xs uppercase font-medium tracking-widest">Not Listed</span>

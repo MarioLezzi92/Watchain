@@ -4,14 +4,11 @@ import * as inventoryController from "../controllers/inventoryController.js";
 
 const router = express.Router();
 
-// Recupera i miei oggetti
-router.get("/", requireAuth, inventoryController.getMyInventory);
+// Protegge tutte le rotte del file in un colpo solo
+router.use(requireAuth);
 
-// Azioni sugli oggetti
-router.post("/mint", requireAuth, inventoryController.mint);
-router.post("/certify", requireAuth, inventoryController.certify);
-
-// Se avevi pause/unpause NFT, potresti aggiungerle qui o in un adminRoutes
-// router.post("/pause", requireAuth, inventoryController.pause);
+router.get("/", inventoryController.getMyInventory);
+router.post("/mint", inventoryController.mint);
+router.post("/certify", inventoryController.certify);
 
 export default router;

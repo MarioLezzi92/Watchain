@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from "react";
 import { XMarkIcon, CheckBadgeIcon } from "@heroicons/react/24/outline";
-import { weiToLux } from "../../lib/format"; // Manteniamo solo questo per la visualizzazione
 
 export default function WatchDetailsModal({ open, onClose, item, role, onList, onCancel, onBuy, onCertify, busy }) {
   const [inputPrice, setInputPrice] = useState("");
@@ -68,8 +67,7 @@ export default function WatchDetailsModal({ open, onClose, item, role, onList, o
             <div className="p-4 rounded-2xl bg-black/20 border border-white/5">
               <div className="text-xs text-[#D4AF37] uppercase font-bold tracking-widest mb-1">Current Price</div>
               <div className="text-3xl font-bold text-white">
-                {/* Visualizzazione intelligente: gestisce sia numeri piccoli che enormi */}
-                {isListed ? `${weiToLux(item.priceLux)} LUX` : "Not for sale"}
+                {isListed ? `${item.priceLux} LUX` : "Not for sale"}
               </div>
             </div>
 
@@ -151,7 +149,7 @@ export default function WatchDetailsModal({ open, onClose, item, role, onList, o
                 className="w-full py-4 bg-[#D4AF37] hover:bg-[#c49f27] text-[#4A0404] text-lg font-bold rounded-xl shadow-[0_0_20px_rgba(212,175,55,0.3)] transition transform hover:scale-[1.02] active:scale-95 flex items-center justify-center gap-2"
               >
                 {/* Visualizzazione intelligente anche qui */}
-                {busy ? "Processing..." : `Buy Now for ${weiToLux(item.priceLux)} LUX`}
+                {busy ? "Processing..." : `Buy Now for ${item.priceLux} LUX`}
               </button>
             )}
 

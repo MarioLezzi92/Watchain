@@ -1,27 +1,25 @@
 import { getToken } from "./auth";
 
-// backend/src/app.js ora serve su /api
-// Se VITE_BACKEND_BASE non è settato, usa localhost:3001/api
 const BASE = (import.meta.env.VITE_BACKEND_BASE || "http://localhost:3001/api").replace(/\/+$/, "");
 
+/**
+ * Costruisce l'header di autorizzazione usando il Bearer Token. 
+ */
 function buildAuthHeader() {
   const t = getToken();
   if (!t) return null;
   const cleanToken = String(t).replace(/\s+/g, "");
   if (!cleanToken) return null;
-  return `Bearer ${cleanToken}`;
+  return `Bearer ${cleanToken}`; // Formato standard richiesto dal middleware 
 }
 
 function prettyErr(data) {
   if (!data) return "";
   if (typeof data === "string") return data;
   if (typeof data === "object") {
-    if (data.error) {
-      if (typeof data.error === "string") return data.error;
-      try { return JSON.stringify(data.error); } catch { return String(data.error); }
-    }
+    // Cerca il campo 'error' come nelle risposte del tuo backend [cite: 266, 308]
+    if (data.error) return typeof data.error === "string" ? data.error : JSON.stringify(data.error);
     if (data.message) return String(data.message);
-    try { return JSON.stringify(data); } catch { return String(data); }
   }
   return String(data);
 }
@@ -31,8 +29,15 @@ async function parseResponse(res) {
   let data = null;
   try { data = text ? JSON.parse(text) : null; } catch { data = text; }
 
-  if (!res.ok) {
+  // Gestione errori: HTTP non OK o campo success: false 
+  if (!res.ok || (data && data.success === false)) {
     const msg = prettyErr(data) || `HTTP ${res.status}`;
+    
+    // Se il token è scaduto (401), potresti voler forzare il logout 
+    if (res.status === 401) {
+       console.warn("Sessione scaduta o non valida.");
+    }
+    
     throw new Error(msg);
   }
   return data;
@@ -43,7 +48,6 @@ export async function apiGet(path) {
   const headers = { Accept: "application/json" };
   if (auth) headers.Authorization = auth;
 
-  // Nota: path deve iniziare con / (es: /market/listings)
   const res = await fetch(`${BASE}${path}`, { method: "GET", headers });
   return parseResponse(res);
 }

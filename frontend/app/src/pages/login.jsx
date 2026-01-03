@@ -1,7 +1,10 @@
+// src/pages/login.jsx
 import React, { useState } from "react";
 import { apiGet, apiPost } from "../lib/api";
 
-
+/**
+ * Funzione per connettere MetaMask e recuperare l'indirizzo pubblico[cite: 152, 158].
+ */
 async function connectMetamask() {
   if (!window.ethereum) throw new Error("MetaMask non trovato (installa l’estensione).");
 
@@ -20,34 +23,36 @@ export default function Login() {
     setErr("");
     setLoading(true);
     try {
-      // 1) Connect
+      // 1) Connessione al Wallet [cite: 11, 32]
       const { address } = await connectMetamask();
 
-      // 2) Nonce
-      const { nonce } = await apiGet(`/auth/nonce?address=${address}`);
+      // 2) Recupero del Nonce dal server per prevenire Replay Attack [cite: 83, 84, 136]
+      const resNonce = await apiGet(`/auth/nonce?address=${address}`);
+      const nonce = resNonce?.nonce; 
+
       if (!nonce) throw new Error("Nonce non ricevuto dal backend.");
 
-      // 3) Firma
+      // 3) Firma del messaggio (Standard personal_sign richiesto dal lab) [cite: 44, 152, 163]
       const message = `Login to WatchDApp\nNonce: ${nonce}`;
       const signature = await window.ethereum.request({
         method: "personal_sign",
         params: [message, address],
       });
 
-      // 4) Login
-      const res = await apiPost("/auth/login", { address, signature });
-      const token = res?.token;
-      const role = res?.role;
+      // 4) Invio firma al server per ricevere il JWT [cite: 46, 224, 345, 346]
+      const resLogin = await apiPost("/auth/login", { address, signature });
+      
+      const token = resLogin?.token;
+      const role = resLogin?.role;
 
-      if (!token || !role) throw new Error("Login fallito: token/role mancanti.");
+      if (!token || !role) throw new Error("Login fallito: credenziali non valide.");
 
-      // 5) Salva sessione
+      // 5) Salvataggio sessione nel browser 
       localStorage.setItem("token", token);
       localStorage.setItem("role", role);
       localStorage.setItem("address", address);
 
-      // 6) REDIRECT SEMPLIFICATO: Tutti vanno al Mercato o al Profilo
-      // Non usiamo più le rotte separate /producer, /reseller, ecc.
+      // 6) Redirect alla Dashboard/Marketplace
       window.location.href = "/market"; 
 
     } catch (e) {
@@ -87,7 +92,7 @@ export default function Login() {
           <p className="text-[#f2e9d0]/80 mb-8 font-light leading-relaxed">
             Connect your wallet to access the exclusive marketplace. 
             <br className="hidden sm:block"/>
-            Identity verification is handled automatically.
+            Identity verification is handled automatically via JWT.
           </p>
 
           {err ? (
@@ -114,7 +119,7 @@ export default function Login() {
           </button>
 
           <div className="mt-8 text-[10px] text-[#f2e9d0]/30 font-mono">
-            Secure connection required. Please ensure MetaMask is unlocked.
+            Secure connection required. Please ensure MetaMask is unlocked. [cite: 127, 134]
           </div>
         </div>
       </div>

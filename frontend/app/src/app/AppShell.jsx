@@ -1,9 +1,9 @@
-import React from "react";
+import { logout } from "../lib/auth";
 import { useNavigate, useLocation } from "react-router-dom";
 import { 
   UserCircleIcon, 
-  ArrowRightOnRectangleIcon, // Icona Logout
-  ArrowLeftOnRectangleIcon,  // Icona Login
+  ArrowRightOnRectangleIcon, 
+  ArrowLeftOnRectangleIcon,  
   ShoppingBagIcon, 
   WalletIcon 
 } from "@heroicons/react/24/outline";
@@ -17,11 +17,9 @@ export default function AppShell({ title = "WatchDApp", address, balanceLux, chi
   const navigate = useNavigate();
   const location = useLocation();
 
-  // --- LOGICA LOGOUT ---
-  const handleLogout = () => {
-    localStorage.clear();
-    // Reindirizza alla root. App.jsx ti porterà poi su /market come utente anonimo
-    window.location.href = "/"; 
+  // --- LOGOUT ---
+  const handleLogout = async () => {
+    await logout();
   };
   // ---------------------
 

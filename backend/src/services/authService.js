@@ -1,10 +1,9 @@
 import crypto from "crypto";
-import jwt from "jsonwebtoken";
-import { ethers } from "ethers"; // Assicurati di avere ethers installato
+import { ethers } from "ethers";
 import { config } from "../config/env.js";
-import { normalizeRole } from "../utils/formatters.js";
+import { signJwt } from "../utils/jwt.js";
 
-const nonces = new Map(); // DB in RAM per i nonce
+const nonces = new Map();
 const NONCE_TTL_MS = 5 * 60 * 1000; // 5 minuti
 
 function makeNonce() {
@@ -16,7 +15,7 @@ function determineRole(address) {
   if (a === String(config.producerAddr).toLowerCase()) return "producer";
   if (a === String(config.resellerAddr).toLowerCase()) return "reseller";
   if (a === String(config.consumerAddr).toLowerCase()) return "consumer";
-  return null; // O "viewer" se vuoi un ruolo default
+  return "consumer"; // Ruolo di default se non in whitelist
 }
 
 export const generateNonce = (address) => {
@@ -30,29 +29,30 @@ export const verifyLogin = (address, signature) => {
   const addrNormal = address.toLowerCase();
   const entry = nonces.get(addrNormal);
 
-  if (!entry) throw new Error("nonce not found");
+  if (!entry) throw new Error("Nonce not found");
   if (Date.now() > entry.exp) {
     nonces.delete(addrNormal);
-    throw new Error("nonce expired");
+    throw new Error("Nonce expired");
   }
 
   const message = `Login to WatchDApp\nNonce: ${entry.nonce}`;
   
-  // Verifica firma con Ethers
+  // Verifica della firma crittografica
   const recovered = ethers.verifyMessage(message, signature);
   if (recovered.toLowerCase() !== addrNormal) {
-    throw new Error("bad signature");
+    throw new Error("Bad signature");
   }
 
-  // Brucia il nonce per evitare replay attack
+  // Invalida il nonce dopo l'uso (Replay Protection)
   nonces.delete(addrNormal);
 
-  // Assegna ruolo
   const role = determineRole(addrNormal);
-  if (!role) throw new Error("Address not authorized (not in whitelist)");
 
-  // Crea Token
-  const token = jwt.sign({ sub: addrNormal, role }, config.jwtSecret, { expiresIn: "2h" });
+  // Payload conforme a slide pag. 19: usa 'account'
+  const token = signJwt({ 
+    account: addrNormal, 
+    role: role 
+  });
 
-  return { token, role };
+  return { success: true, token, role };
 };

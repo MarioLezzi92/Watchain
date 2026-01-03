@@ -1,11 +1,10 @@
-import jwt from "jsonwebtoken";
-import { config } from "../config/env.js";
+import { verifyJwt } from "../utils/jwt.js";
 
 export const requireAuth = (req, res, next) => {
   const authHeader = req.headers.authorization;
 
   if (!authHeader) {
-    return res.status(401).json({ error: "Authorization header missing" });
+    return res.status(401).json({ success: false, error: "Authorization header missing" });
   }
 
   const token = authHeader.startsWith("Bearer ") 
@@ -13,15 +12,22 @@ export const requireAuth = (req, res, next) => {
     : authHeader;
 
   if (!token) {
-    return res.status(401).json({ error: "Token missing" });
+    return res.status(401).json({ success: false, error: "Token missing" });
   }
 
   try {
-    const payload = jwt.verify(token, config.jwtSecret);
-    req.user = payload; // { sub: address, role: "..." }
+    const decoded = verifyJwt(token);
+    
+    // Mappiamo 'account' (dalle slide) su 'sub' (usato nei tuoi controller)
+    // per non dover cambiare il codice di Market e Inventory.
+    req.user = {
+      sub: decoded.account, 
+      role: decoded.role
+    };
+    
     next();
   } catch (err) {
     console.error("Auth Token Error:", err.message);
-    return res.status(401).json({ error: "Invalid or expired token" });
+    return res.status(401).json({ success: false, error: "Token non valido o scaduto" });
   }
 };

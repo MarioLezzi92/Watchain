@@ -1,20 +1,18 @@
-// src/utils/jwt.js
 import jwt from "jsonwebtoken";
 import { config } from "../config/env.js";
 
 /**
- * Genera un nuovo token JWT.
- * @param {Object} payload - Dati da inserire nel token (es. { sub, role })
- * @param {string} expiresIn - Durata (es. "2h", "8h")
+ * Genera un nuovo token JWT 
+ * @param {Object} payload - Dati da inserire (es. { account: "0x...", role: "producer" })
+ * @param {string} expiresIn - Durata (es. "1h")
  */
-export function signJwt(payload, expiresIn = "2h") {
+export function signJwt(payload, expiresIn = "1h") {
   if (!config.jwtSecret) throw new Error("JWT_SECRET missing in config");
   return jwt.sign(payload, config.jwtSecret, { expiresIn });
 }
 
 /**
  * Verifica un token JWT.
- * Restituisce il payload decodificato o lancia un errore.
  */
 export function verifyJwt(token) {
   if (!config.jwtSecret) throw new Error("JWT_SECRET missing in config");
@@ -22,7 +20,7 @@ export function verifyJwt(token) {
 }
 
 /**
- * Decodifica il token senza verificarne la firma (utile solo per debug/client).
+ * Decodifica il token senza verificarne la firma (utile per il frontend).
  */
 export function decodeJwt(token) {
   return jwt.decode(token);

@@ -3,14 +3,6 @@
 // Nota: La logica di login con MetaMask ora è interamente in login.jsx
 // Qui gestiamo solo il LocalStorage
 
-export function logout() {
-  localStorage.removeItem("token");
-  localStorage.removeItem("address");
-  localStorage.removeItem("role");
-  // Redirect forzato
-  window.location.href = "/login";
-}
-
 export function getToken() {
   return localStorage.getItem("token");
 }
@@ -25,4 +17,29 @@ export function getRole() {
 
 export function isAuthenticated() {
   return !!getToken();
+}
+
+export async function logout() {
+  try {
+    const token = getToken();
+    if (token) {
+      // Avvisa il backend (rotta simbolica) come previsto dal flusso delle slide
+      await fetch("http://localhost:3001/api/auth/logout", {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${token}`
+        }
+      });
+    }
+  } catch (err) {
+    console.warn("Backend logout failed, cleaning up locally...", err);
+  } finally {
+    // Pulizia del LocalStorage (Stateful session cleanup) 
+    localStorage.removeItem("token");
+    localStorage.removeItem("address");
+    localStorage.removeItem("role");
+
+    // Redirect forzato alla pagina di login 
+    window.location.href = "/market";
+  }
 }

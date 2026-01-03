@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect } from "react";
 import AppShell from "../app/AppShell";
 import usePolling from "../hooks/usePolling";
 import { getBalance } from "../services/walletService";
@@ -10,9 +10,11 @@ import SuccessModal from "../components/ui/SuccessModal";
 import ErrorModal from "../components/ui/ErrorModal";
 import { ArrowPathIcon, ShoppingCartIcon } from "@heroicons/react/24/outline";
 
+
 export default function MarketPage() {
-  const role = useMemo(() => String(localStorage.getItem("role") || "").toLowerCase(), []);
-  const address = useMemo(() => String(localStorage.getItem("address") || ""), []);
+  // Rimosso useMemo per garantire reattività dopo il logout
+  const role = String(localStorage.getItem("role") || "").toLowerCase();
+  const address = localStorage.getItem("address") || "";
   const [balanceLux, setBalanceLux] = useState("-");
 
   const [listings, setListings] = useState([]);
@@ -47,42 +49,32 @@ export default function MarketPage() {
       
       const filtered = arr.filter(item => {
         const sType = String(item.saleType || "").toUpperCase();
-        const tokenId = item.tokenId;
-        let keep = false;
-
-        // Controllo prezzo
         try { 
             if (BigInt(item.price || "0") <= 0n) return false; 
         } catch { return false; }
 
-        // --- LOGICA DI FILTRO ---
         if (role === '' || role === 'consumer') {
-          keep = (sType === 'SECONDARY');
+          return sType === 'SECONDARY';
         }
-        else if (role === 'reseller') {
-          keep = (sType === 'PRIMARY');
-        }
-        else if (role === 'producer') {
-          keep = (sType === 'PRIMARY');
-        }
-        else {
-            keep = false;
-        }
-
-        return keep; 
+        return sType === 'PRIMARY';
       });
       
       const normalized = filtered.map(item => {
         let priceLux = "0";
-        try { priceLux = (BigInt(item.price) / 10n ** 18n).toString(); } catch {}
+        try { 
+          // 1. CONVERSIONE UNICA: Trasformiamo i Wei della blockchain in LUX leggibili
+          priceLux = (BigInt(item.price) / 10n ** 18n).toString(); 
+        } catch {
+          priceLux = "0";
+        }
 
         return {
           tokenId: String(item.tokenId),
           seller: String(item.seller || ""),
           owner: String(item.owner || ""),
           certified: Boolean(item.certified),
-          priceWei: item.price,
-          priceLux: priceLux,
+          priceWei: item.price, // Manteniamo il valore originale per le transazioni
+          priceLux: priceLux,   // Usiamo questo per TUTTE le visualizzazioni testuali
           saleType: item.saleType
         };
       });
@@ -117,17 +109,16 @@ export default function MarketPage() {
       await buy(item.tokenId);
       setConfirmModal(prev => ({ ...prev, isOpen: false }));
       setOpen(false); 
-      setSuccessModal({ isOpen: true, message: "Acquisto completato con successo! Trovi l'orologio nel tuo Inventario." });
+      setSuccessModal({ isOpen: true, message: "Acquisto completato con successo!" });
       setTimeout(() => {
           refreshListings(true);
           refreshBalance();
       }, 1000);
     } catch (e) {
       setConfirmModal(prev => ({ ...prev, isOpen: false }));
-      console.error(e);
       let errorMsg = e?.response?.data?.error || e.message || "Errore sconosciuto";
-      if (errorMsg.includes("transfer amount exceeds balance") || errorMsg.includes("500")) {
-         errorMsg = "Fondi insufficienti per completare l'acquisto.";
+      if (errorMsg.includes("transfer amount exceeds balance")) {
+         errorMsg = "Saldo LUX insufficiente.";
       }
       setErrorModal({ isOpen: true, message: errorMsg });
     } finally {
@@ -135,32 +126,13 @@ export default function MarketPage() {
     }
   };
 
-  const performCancel = async (item) => {
-    setBusy(true);
-    try {
-      await cancelListing(item.tokenId);
-      setConfirmModal(prev => ({ ...prev, isOpen: false }));
-      setOpen(false);
-      setSuccessModal({ isOpen: true, message: "Listing ritirato dal mercato con successo." });
-      setTimeout(() => {
-          refreshListings(true);
-          refreshBalance();
-      }, 1000);
-    } catch (e) {
-      setConfirmModal(prev => ({ ...prev, isOpen: false }));
-      console.error(e);
-      let errorMsg = e?.response?.data?.error || e.message || "Errore durante la cancellazione.";
-      setErrorModal({ isOpen: true, message: errorMsg });
-    } finally {
-      setBusy(false);
-    }
-  };
-
+  // --- LOGICA MODALE CONFERMA ---
   const handleBuyClick = (item) => {
     if (!address) {
         window.location.href = "/login";
         return;
     }
+
     setConfirmModal({
       isOpen: true,
       title: "Conferma Acquisto",
@@ -168,6 +140,31 @@ export default function MarketPage() {
       onConfirm: () => performBuy(item)
     });
   };
+
+  const performCancel = async (item) => {
+  setBusy(true);
+  try {
+    await cancelListing(item.tokenId); 
+    setConfirmModal(prev => ({ ...prev, isOpen: false }));
+    setOpen(false); 
+    setSuccessModal({ 
+      isOpen: true, 
+      message: `L'orologio #${item.tokenId} è stato rimosso dal mercato.` 
+    });
+    setTimeout(() => {
+        refreshListings(true);
+    }, 1000);
+  } catch (e) {
+    console.error("Errore cancellazione:", e);
+    setConfirmModal(prev => ({ ...prev, isOpen: false }));
+    setErrorModal({ 
+      isOpen: true, 
+      message: "Non è stato possibile rimuovere l'orologio. Riprova." 
+    });
+  } finally {
+    setBusy(false);
+  }
+};
 
   const handleCancelClick = (item) => {
     setConfirmModal({
@@ -178,89 +175,40 @@ export default function MarketPage() {
     });
   };
 
+
+
   const openDetails = (item) => { setSelected(item); setOpen(true); };
 
   return (
     <AppShell title="WatchDApp" address={address} balanceLux={balanceLux}>
       <div className="space-y-8">
-        
-        {/* HEADER */}
         <div className="flex items-end justify-between border-b border-[#4A0404]/10 pb-4">
            <div>
              <h1 className="text-[#4A0404] text-4xl font-serif font-bold">Market {marketTitle}</h1>
              <p className="text-[#4A0404]/60 mt-1">
-               {role === 'reseller' 
-                 ? "Acquista orologi grezzi dal Producer." 
-                 : "Esplora gli orologi in vendita."}
+               {role === 'reseller' ? "Acquista dal Producer." : "Esplora gli orologi in vendita."}
              </p>
            </div>
-           
-           <button 
-             onClick={handleManualRefresh}
-             disabled={loading}
-             className="flex items-center gap-2 px-6 py-2.5 bg-white text-[#4A0404] font-bold rounded-xl shadow-md hover:shadow-xl hover:bg-[#4A0404] hover:text-white transition-all duration-300 disabled:opacity-50 border border-[#4A0404]/5"
-           >
-             {loading && <ArrowPathIcon className="h-5 w-5 animate-spin"/>}
+           <button onClick={handleManualRefresh} disabled={loading} className="...">
              {loading ? "Refreshing..." : "Refresh Market"}
            </button>
         </div>
 
-        {/* GRIGLIA */}
         {listings.length === 0 ? (
-          <div className="py-20 text-center rounded-3xl bg-white/50 border-2 border-dashed border-[#4A0404]/10">
-             <ShoppingCartIcon className="h-16 w-16 text-[#4A0404]/20 mx-auto mb-4"/>
-             <p className="text-[#4A0404]/50 font-serif text-xl italic">
-               {role === 'reseller' 
-                 ? "Nessun orologio del Producer disponibile." 
-                 : "Nessun orologio in vendita al momento."}
-             </p>
-          </div>
+          <div className="..."> Nessun orologio in vendita. </div>
         ) : (
           <div className="grid gap-8 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
             {listings.map((item) => (
-               <WatchCard 
-                 key={item.tokenId} 
-                 item={item} 
-                 onOpen={openDetails} 
-                 variant="market" 
-               />
+               <WatchCard key={item.tokenId} item={item} onOpen={openDetails} variant="market" />
             ))}
           </div>
         )}
-
       </div>
 
-      <WatchDetailsModal
-        open={open}
-        onClose={() => setOpen(false)}
-        item={selected}
-        role={role}
-        onBuy={handleBuyClick}
-        onCancel={handleCancelClick}
-        busy={busy}
-      />
-
-      <ConfirmModal 
-        isOpen={confirmModal.isOpen}
-        title={confirmModal.title}
-        message={confirmModal.message}
-        onConfirm={confirmModal.onConfirm}
-        onClose={() => setConfirmModal(prev => ({ ...prev, isOpen: false }))}
-        busy={busy}
-      />
-
-      <SuccessModal 
-        isOpen={successModal.isOpen}
-        message={successModal.message}
-        onClose={() => setSuccessModal(prev => ({ ...prev, isOpen: false }))}
-      />
-
-      <ErrorModal 
-        isOpen={errorModal.isOpen}
-        message={errorModal.message}
-        onClose={() => setErrorModal(prev => ({ ...prev, isOpen: false }))}
-      />
-
+      <WatchDetailsModal open={open} onClose={() => setOpen(false)} item={selected} role={role} onBuy={handleBuyClick} onCancel={handleCancelClick} busy={busy} />
+      <ConfirmModal isOpen={confirmModal.isOpen} title={confirmModal.title} message={confirmModal.message} onConfirm={confirmModal.onConfirm} onClose={() => setConfirmModal(p => ({ ...p, isOpen: false }))} busy={busy} />
+      <SuccessModal isOpen={successModal.isOpen} message={successModal.message} onClose={() => setSuccessModal(p => ({ ...p, isOpen: false }))} />
+      <ErrorModal isOpen={errorModal.isOpen} message={errorModal.message} onClose={() => setErrorModal(p => ({ ...p, isOpen: false }))} />
     </AppShell>
   );
 }
