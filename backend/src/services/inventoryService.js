@@ -1,5 +1,4 @@
-import { ffQuery, ffInvoke } from "./fireflyService.js";
-// Importiamo solo quello che serve davvero dalle nuove utility
+import { ffQuery, ffInvoke, ffGetCore } from "./fireflyService.js";
 import { unwrapFFOutput, normalizeRole, parseBool } from "../utils/formatters.js";
 import { config } from "../config/env.js";
 
@@ -42,35 +41,62 @@ async function getCertifiedStatus(role, tokenId) {
 // --- Funzioni Pubbliche ---
 
 /**
- * Recupera gli NFT dell'utente corrente.
+ * Recupera gli NFT dell'utente corrente usando l'indice di FireFly (Token Pool).
+ * MOLTO PIÙ VELOCE: Niente cicli su nextId.
+ */
+/**
+ * Recupera gli NFT dell'utente corrente usando l'indice di FireFly.
+ * FILTRA AUTOMATICAMENTE I TOKEN ERC20 (come LUX) che non hanno ID.
  */
 export async function getInventory(role, userAddress) {
-  const r = normalizeRole(role);
   const targetAddr = String(userAddress).toLowerCase();
-  
-  const nextIdRes = await ffQuery(r, NFT_API, "nextId", {});
-  const nextId = Number(unwrapFFOutput(nextIdRes) || 0);
 
-  const items = [];
+  try {
+    // 1. Chiede a FireFly tutti i saldi (sia NFT che ERC20)
+    const balances = await ffGetCore(role, "tokens/balances", {
+      key: targetAddr,
+      balance: ">0",
+      limit: 50
+    });
 
-  for (let i = 1; i <= nextId; i++) {
-    // Parallelizziamo le query per massimizzare la velocità
-    const [ownerRaw, isCertified] = await Promise.all([
-      getOwnerOf(r, i),
-      getCertifiedStatus(r, i)
-    ]);
-
-    const owner = String(ownerRaw || "").toLowerCase();
-
-    if (owner === targetAddr) {
-      items.push({
-        tokenId: String(i),
-        owner,
-        certified: isCertified,
-      });
+    if (!balances || balances.length === 0) {
+      return [];
     }
+    
+    // Debug: vediamo cosa ci restituisce FireFly per capire meglio
+    // console.log("🔍 Raw Balances from FireFly:", balances);
+
+    // 2. Processiamo i saldi
+    const promises = balances.map(async (entry) => {
+      // PUNTO CRITICO: Verifichiamo se esiste un tokenIndex.
+      // I token ERC20 (LuxuryCoin) NON hanno tokenIndex, quindi saranno undefined.
+      const rawId = entry.tokenIndex;
+
+      // Se non c'è ID, è spazzatura (o è una moneta), lo scartiamo.
+      if (!rawId) return null;
+
+      // Se c'è un ID, procediamo a chiedere se è certificato
+      const isCertified = await getCertifiedStatus(role, rawId);
+
+      return {
+        tokenId: String(rawId),
+        owner: targetAddr,
+        certified: isCertified,
+      };
+    });
+
+    // 3. Attendiamo tutte le promesse
+    const results = await Promise.all(promises);
+
+    // 4. Filtriamo via i 'null' (cioè le monete/errori che abbiamo scartato sopra)
+    const items = results.filter(item => item !== null);
+
+    return items;
+
+  } catch (err) {
+    console.error("Errore recupero inventario da FireFly:", err.message);
+    return [];
   }
-  return items;
 }
 
 /**

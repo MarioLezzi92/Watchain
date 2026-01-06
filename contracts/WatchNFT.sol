@@ -3,7 +3,6 @@ pragma solidity ^0.8.20;
 
 import "@openzeppelin/contracts/token/ERC721/ERC721.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
-
 import "./security/EmergencyStop.sol";
 
 contract WatchNFT is ERC721, Ownable, EmergencyStop {
@@ -72,46 +71,4 @@ contract WatchNFT is ERC721, Ownable, EmergencyStop {
         emit Certified(tokenId, msg.sender);
     }
 
-    // ------------------------
-    // Gas Optimization (Memory Array Building)
-    // ------------------------
-
-    /// @notice Restituisce tutti i Token ID posseduti da un indirizzo
-    /// @dev Implementa il pattern 'Memory Array Building' per evitare loop costosi off-chain
-    function getItemsByOwner(address _owner) external view returns (uint256[] memory) {
-        uint256 totalItems = nextId; 
-        uint256 count = 0;
-
-        // Fase 1: Conta quanti oggetti possiede l'utente
-        for (uint256 i = 1; i <= totalItems; i++) {
-            // Se supporti il burning, dovresti controllare _exists(i) qui
-            // ownerOf lancia revert se il token non esiste, quindi in uno scenario senza burn è ok.
-            // In uno scenario con burn, usa try/catch o _ownerOf (se interna).
-            try this.ownerOf(i) returns (address owner) {
-                if (owner == _owner) {
-                    count++;
-                }
-            } catch {
-                // Token bruciato o non esistente, ignora
-            }
-        }
-
-        // Fase 2: Crea l'array in memoria
-        uint256[] memory result = new uint256[](count);
-        uint256 index = 0;
-
-        // Fase 3: Popola l'array
-        for (uint256 i = 1; i <= totalItems; i++) {
-            try this.ownerOf(i) returns (address owner) {
-                if (owner == _owner) {
-                    result[index] = i;
-                    index++;
-                }
-            } catch {
-                continue;
-            }
-        }
-
-        return result;
-    }
 }
