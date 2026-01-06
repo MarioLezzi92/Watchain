@@ -38,23 +38,14 @@ async function getCertifiedStatus(role, tokenId) {
   }
 }
 
-// --- Funzioni Pubbliche ---
 
-/**
- * Recupera gli NFT dell'utente corrente usando l'indice di FireFly (Token Pool).
- * MOLTO PIÙ VELOCE: Niente cicli su nextId.
- */
-/**
- * Recupera gli NFT dell'utente corrente usando l'indice di FireFly.
- * FILTRA AUTOMATICAMENTE I TOKEN ERC20 (come LUX) che non hanno ID.
- */
 export async function getInventory(role, userAddress) {
   const targetAddr = String(userAddress).toLowerCase();
 
   try {
-    // 1. Chiede a FireFly tutti i saldi (sia NFT che ERC20)
+    // 1. Chiede a FireFly i saldi
     const balances = await ffGetCore(role, "tokens/balances", {
-      key: targetAddr,
+      key: targetAddr, 
       balance: ">0",
       limit: 50
     });
@@ -62,20 +53,26 @@ export async function getInventory(role, userAddress) {
     if (!balances || balances.length === 0) {
       return [];
     }
-    
-    // Debug: vediamo cosa ci restituisce FireFly per capire meglio
-    // console.log("🔍 Raw Balances from FireFly:", balances);
 
-    // 2. Processiamo i saldi
+    // 2. Processiamo i saldi con FILTRI DI SICUREZZA
     const promises = balances.map(async (entry) => {
-      // PUNTO CRITICO: Verifichiamo se esiste un tokenIndex.
-      // I token ERC20 (LuxuryCoin) NON hanno tokenIndex, quindi saranno undefined.
       const rawId = entry.tokenIndex;
 
-      // Se non c'è ID, è spazzatura (o è una moneta), lo scartiamo.
+      // FILTRO 1: Scartiamo le monete (senza ID) o errori
       if (!rawId) return null;
 
-      // Se c'è un ID, procediamo a chiedere se è certificato
+      // FILTRO 2 (IL FIX): Controllo paranoico dell'owner.
+      // Se FireFly ci ha mandato per sbaglio l'orologio di qualcun altro, lo scartiamo qui.
+      // Controlliamo che la "key" del record corrisponda all'indirizzo che abbiamo chiesto.
+      if (entry.key && String(entry.key).toLowerCase() !== targetAddr) {
+         // console.warn("Scartato token non appartenente all'utente:", entry);
+         return null;
+      }
+
+      // FILTRO 3: Sicurezza sul saldo > 0 (anche se l'abbiamo chiesto nell'API)
+      if (Number(entry.balance) <= 0) return null;
+
+      // Se siamo arrivati qui, siamo sicuri che è nostro.
       const isCertified = await getCertifiedStatus(role, rawId);
 
       return {
@@ -85,16 +82,13 @@ export async function getInventory(role, userAddress) {
       };
     });
 
-    // 3. Attendiamo tutte le promesse
     const results = await Promise.all(promises);
-
-    // 4. Filtriamo via i 'null' (cioè le monete/errori che abbiamo scartato sopra)
-    const items = results.filter(item => item !== null);
-
-    return items;
+    
+    // 3. Pulizia finale
+    return results.filter(item => item !== null);
 
   } catch (err) {
-    console.error("Errore recupero inventario da FireFly:", err.message);
+    console.error("Errore recupero inventario:", err.message);
     return [];
   }
 }
