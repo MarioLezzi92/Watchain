@@ -17,7 +17,6 @@ export async function withdrawCredits() {
 
 // --- SCRITTURA PRODUCER ---
 export async function mintWatch() {
-  // ⚠️ Cambiato da /nft/mint a /inventory/mint
   return await apiPost("/inventory/mint", {}); 
 }
 
@@ -32,7 +31,6 @@ export async function listPrimary(tokenId, priceLux) {
 
 // --- SCRITTURA RESELLER ---
 export async function certify(tokenId) {
-  // ⚠️ Cambiato da /nft/certify a /inventory/certify
   return await apiPost("/inventory/certify", { tokenId: String(tokenId) });
 }
 
@@ -51,7 +49,5 @@ export async function buy(tokenId) {
 }
 
 export async function cancelListing(tokenId) {
-  // ⚠️ Endpoint accorciato o standardizzato nel backend v2 (check marketController)
-  // Nel backend v2 marketController.js abbiamo mappato "cancelListing" su "/market/cancel"
   return await apiPost("/market/cancel", { tokenId: String(tokenId) });
 }

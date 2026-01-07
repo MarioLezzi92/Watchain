@@ -1,6 +1,5 @@
 import React, { useMemo, useState, useEffect } from "react";
 import AppShell from "../app/AppShell";
-import usePolling from "../hooks/usePolling";
 import { getBalance } from "../services/walletService";
 import { apiGet, apiPost } from "../lib/api";
 import WatchCard from "../components/domain/WatchCard";
@@ -13,7 +12,7 @@ import {
   ArrowPathIcon,
   BanknotesIcon,
 } from "@heroicons/react/24/outline";
-
+import { io } from "socket.io-client"; 
 import {
   mintWatch,
   listPrimary,
@@ -110,13 +109,22 @@ export default function MePage() {
     }
   };
 
+  // --- NUOVA LOGICA SOCKET ---
   useEffect(() => {
     refreshBalance(true);
     refreshInventory(true);
+
+    const socket = io("http://localhost:3001");
+
+    socket.on("market-update", (data) => {
+      console.log("⚡ EVENTO PER ME-PAGE:", data);
+      refreshBalance(true);
+      refreshInventory(true);
+    });
+
+    return () => socket.disconnect();
   }, []);
 
-  usePolling(() => refreshBalance(true), 10000, []);
-  usePolling(() => refreshInventory(true), 5000, []);
 
   const handleManualBalance = () => refreshBalance(false);
   const handleManualInventory = () => refreshInventory(false);
@@ -126,7 +134,6 @@ export default function MePage() {
     setOpen(true);
   };
 
-  // --- LOGICA APPROVAZIONE: CORRETTA ---
   const ensureMarketApproval = async () => {
     try {
       const { isApproved } = await apiGet("/market/approval-status");
@@ -134,21 +141,14 @@ export default function MePage() {
 
       return await new Promise((resolve) => {
         const finish = (val) => {
-          setConfirmModal({
-            isOpen: false,
-            title: "",
-            message: "",
-            onConfirm: null,
-            onClose: null,
-          });
+          setConfirmModal({ isOpen: false, title: "", message: "", onConfirm: null, onClose: null });
           resolve(val);
         };
 
         setConfirmModal({
           isOpen: true,
           title: "Autorizzazione Necessaria",
-          message:
-            "Per mettere in vendita i tuoi orologi, devi autorizzare il Marketplace a gestire i tuoi NFT. Questa operazione va fatta solo una volta. Vuoi procedere?",
+          message: "Per mettere in vendita i tuoi orologi, devi autorizzare il Marketplace a gestire i tuoi NFT. Questa operazione va fatta solo una volta. Vuoi procedere?",
           onConfirm: async () => {
             try {
               setBusy(true);
@@ -181,7 +181,6 @@ export default function MePage() {
       await mintWatch();
       setConfirmModal((prev) => ({ ...prev, isOpen: false }));
       setSuccessModal({ isOpen: true, message: "Orologio creato con successo!" });
-      await refreshInventory(false);
     } catch (e) {
       setConfirmModal((prev) => ({ ...prev, isOpen: false }));
       alert("Errore Mint: " + e.message);
@@ -197,7 +196,6 @@ export default function MePage() {
       setConfirmModal((prev) => ({ ...prev, isOpen: false }));
       setSuccessModal({ isOpen: true, message: `Orologio #${item.tokenId} certificato!` });
       setOpen(false);
-      setTimeout(() => refreshInventory(true), 1000);
     } catch (e) {
       setConfirmModal((prev) => ({ ...prev, isOpen: false }));
       alert("Errore Certificazione: " + e.message);
@@ -207,7 +205,6 @@ export default function MePage() {
   };
 
   const performList = async (item, price) => {
-    // Non settiamo busy a true qui, lo farà eventualmente ensureMarketApproval o dopo il check
     try {
       const approved = await ensureMarketApproval();
       if (!approved) {
@@ -230,7 +227,6 @@ export default function MePage() {
       setConfirmModal((prev) => ({ ...prev, isOpen: false, onConfirm: null }));
       setSuccessModal({ isOpen: true, message: "Listato con successo!" });
       setOpen(false);
-      setTimeout(() => refreshInventory(true), 1000);
     } catch (e) {
       setConfirmModal((prev) => ({ ...prev, isOpen: false, onConfirm: null }));
       alert("Errore Listing: " + (e?.response?.data?.error || e.message));
@@ -246,7 +242,6 @@ export default function MePage() {
       setConfirmModal((prev) => ({ ...prev, isOpen: false }));
       setSuccessModal({ isOpen: true, message: "Listing cancellato." });
       setOpen(false);
-      setTimeout(() => refreshInventory(true), 1000);
     } catch (e) {
       setConfirmModal((prev) => ({ ...prev, isOpen: false }));
       alert("Errore: " + e.message);
@@ -261,7 +256,6 @@ export default function MePage() {
       await withdrawCredits();
       setConfirmModal((prev) => ({ ...prev, isOpen: false }));
       setSuccessModal({ isOpen: true, message: "Crediti prelevati con successo!" });
-      setTimeout(() => refreshBalance(false), 2000);
     } catch (e) {
       setConfirmModal((prev) => ({ ...prev, isOpen: false }));
       alert("Errore Prelievo: " + e.message);
@@ -326,7 +320,6 @@ export default function MePage() {
   return (
     <AppShell title="WatchDApp" address={address} balanceLux={balanceLux}>
       <div className="space-y-12">
-        {/* SEZIONE PRODUTTORE */}
         {role === "producer" && (
           <div className="relative bg-[#4A0404] text-[#FDFBF7] rounded-3xl p-8 shadow-xl overflow-hidden border border-[#5e0a0a]">
             <div className="relative z-10 flex flex-col md:flex-row items-center justify-between gap-6">
@@ -343,24 +336,16 @@ export default function MePage() {
                 disabled={busy}
                 className="px-6 py-3 bg-[#D4AF37] hover:bg-[#c49f27] text-[#4A0404] font-bold rounded-xl shadow-lg transition flex items-center gap-2 disabled:opacity-50"
               >
-                {busy ? (
-                  "Working..."
-                ) : (
-                  <>
-                    <PlusIcon className="h-5 w-5" /> Mint New Watch
-                  </>
-                )}
+                {busy ? "Working..." : <><PlusIcon className="h-5 w-5" /> Mint New Watch</>}
               </button>
             </div>
           </div>
         )}
 
         <div className="grid gap-8 lg:grid-cols-12 items-start">
-          {/* PROFILO */}
           <div className="lg:col-span-4 space-y-6">
             <div className="rounded-3xl bg-[#4A0404] text-[#FDFBF7] p-8 shadow-xl sticky top-28 border border-[#5e0a0a]">
               <div className="text-3xl font-serif font-bold tracking-wide mb-6">Il tuo Profilo</div>
-
               <div className="space-y-4 text-sm">
                 <div className="bg-black/20 p-4 rounded-xl border border-white/5">
                   <div className="text-red-200/80 text-xs uppercase tracking-wider font-bold mb-1">Ruolo</div>
@@ -391,7 +376,6 @@ export default function MePage() {
                   </div>
                 )}
               </div>
-
               <div className="mt-6 flex gap-3">
                 <button
                   onClick={handleManualBalance}
@@ -405,7 +389,6 @@ export default function MePage() {
             </div>
           </div>
 
-          {/* INVENTARIO */}
           <div className="lg:col-span-8 space-y-6">
             <div className="flex items-end justify-between gap-3 border-b border-[#4A0404]/10 pb-4">
               <div>
@@ -457,16 +440,7 @@ export default function MePage() {
         title={confirmModal.title}
         message={confirmModal.message}
         onConfirm={confirmModal.onConfirm}
-        onClose={
-          confirmModal.onClose ||
-          (() =>
-            setConfirmModal((prev) => ({
-              ...prev,
-              isOpen: false,
-              onConfirm: null,
-              onClose: null,
-            })))
-        }
+        onClose={confirmModal.onClose || (() => setConfirmModal((prev) => ({ ...prev, isOpen: false, onConfirm: null, onClose: null })))}
         busy={busy}
       />
 

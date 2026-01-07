@@ -15,16 +15,13 @@ export const requestApproval = async (req, res) => {
   try {
     const { role, sub: address } = req.user;
 
-    // 1. Fai l'approvazione normale per il marketplace [cite: 54]
     const out = await marketService.approveMarketplace(role, address);
 
-    // 2. CONTROLLO INTELLIGENTE
     if (role === 'reseller') {
       const isAuthorized = await inventoryService.checkResellerStatus(address);
-      
+
       if (!isAuthorized) {
         console.log(`[AUTO] Indirizzo ${address} non autorizzato nel contratto. Abilitazione in corso...`);
-        // Questa chiamata usa la chiave del Producer per darti i poteri 
         await inventoryService.enableResellerRole(address);
       }
     }

@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from "react";
 import AppShell from "../app/AppShell";
-import usePolling from "../hooks/usePolling";
 import { getBalance } from "../services/walletService";
 import { getListings, buy, cancelListing } from "../services/marketService"; 
 import WatchCard from "../components/domain/WatchCard";
@@ -8,11 +7,9 @@ import WatchDetailsModal from "../components/domain/WatchDetailsModal";
 import ConfirmModal from "../components/ui/ConfirmModal"; 
 import SuccessModal from "../components/ui/SuccessModal"; 
 import ErrorModal from "../components/ui/ErrorModal";
-import { ArrowPathIcon, ShoppingCartIcon } from "@heroicons/react/24/outline";
-
+import { io } from "socket.io-client"; 
 
 export default function MarketPage() {
-  // Rimosso useMemo per garantire reattività dopo il logout
   const role = String(localStorage.getItem("role") || "").toLowerCase();
   const address = localStorage.getItem("address") || "";
   const [balanceLux, setBalanceLux] = useState("-");
@@ -62,7 +59,6 @@ export default function MarketPage() {
       const normalized = filtered.map(item => {
         let priceLux = "0";
         try { 
-          // 1. CONVERSIONE UNICA: Trasformiamo i Wei della blockchain in LUX leggibili
           priceLux = (BigInt(item.price) / 10n ** 18n).toString(); 
         } catch {
           priceLux = "0";
@@ -73,8 +69,8 @@ export default function MarketPage() {
           seller: String(item.seller || ""),
           owner: String(item.owner || ""),
           certified: Boolean(item.certified),
-          priceWei: item.price, // Manteniamo il valore originale per le transazioni
-          priceLux: priceLux,   // Usiamo questo per TUTTE le visualizzazioni testuali
+          priceWei: item.price,
+          priceLux: priceLux,
           saleType: item.saleType
         };
       });
@@ -88,13 +84,34 @@ export default function MarketPage() {
     }
   };
 
+  // --- LOGICA REAL-TIME ---
   useEffect(() => {
+    // 1. Caricamento Iniziale
     refreshBalance();
     refreshListings(true);
-  }, []);
 
-  usePolling(refreshBalance, 10000, []);
-  usePolling(() => refreshListings(true), 5000, []);
+    // 2. Connessione Socket
+    const socket = io("http://localhost:3001");
+
+    // 3. Ascolto Eventi
+    socket.on("market-update", (data) => {
+      console.log("⚡ EVENTO SOCKET RICEVUTO:", data);
+      
+      if (data.eventType === "Listed") {
+        // Se qualcuno vende, ricarichiamo per avere i dati freschi
+        refreshListings(true);
+      } 
+      else if (data.eventType === "Purchased" || data.eventType === "Canceled") {
+        // Se venduto/cancellato, lo togliamo subito dalla lista visiva!
+        setListings(prev => prev.filter(item => item.tokenId !== data.tokenId));
+      }
+    });
+
+    // 4. Pulizia alla chiusura
+    return () => {
+      socket.disconnect();
+    };
+  }, []);
 
   const handleManualRefresh = () => { refreshListings(false); };
 
@@ -110,10 +127,6 @@ export default function MarketPage() {
       setConfirmModal(prev => ({ ...prev, isOpen: false }));
       setOpen(false); 
       setSuccessModal({ isOpen: true, message: "Acquisto completato con successo!" });
-      setTimeout(() => {
-          refreshListings(true);
-          refreshBalance();
-      }, 1000);
     } catch (e) {
       setConfirmModal(prev => ({ ...prev, isOpen: false }));
       let errorMsg = e?.response?.data?.error || e.message || "Errore sconosciuto";
@@ -126,13 +139,11 @@ export default function MarketPage() {
     }
   };
 
-  // --- LOGICA MODALE CONFERMA ---
   const handleBuyClick = (item) => {
     if (!address) {
         window.location.href = "/login";
         return;
     }
-
     setConfirmModal({
       isOpen: true,
       title: "Conferma Acquisto",
@@ -142,29 +153,26 @@ export default function MarketPage() {
   };
 
   const performCancel = async (item) => {
-  setBusy(true);
-  try {
-    await cancelListing(item.tokenId); 
-    setConfirmModal(prev => ({ ...prev, isOpen: false }));
-    setOpen(false); 
-    setSuccessModal({ 
-      isOpen: true, 
-      message: `L'orologio #${item.tokenId} è stato rimosso dal mercato.` 
-    });
-    setTimeout(() => {
-        refreshListings(true);
-    }, 1000);
-  } catch (e) {
-    console.error("Errore cancellazione:", e);
-    setConfirmModal(prev => ({ ...prev, isOpen: false }));
-    setErrorModal({ 
-      isOpen: true, 
-      message: "Non è stato possibile rimuovere l'orologio. Riprova." 
-    });
-  } finally {
-    setBusy(false);
-  }
-};
+    setBusy(true);
+    try {
+      await cancelListing(item.tokenId); 
+      setConfirmModal(prev => ({ ...prev, isOpen: false }));
+      setOpen(false); 
+      setSuccessModal({ 
+        isOpen: true, 
+        message: `L'orologio #${item.tokenId} è stato rimosso dal mercato.` 
+      });
+    } catch (e) {
+      console.error("Errore cancellazione:", e);
+      setConfirmModal(prev => ({ ...prev, isOpen: false }));
+      setErrorModal({ 
+        isOpen: true, 
+        message: "Non è stato possibile rimuovere l'orologio. Riprova." 
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const handleCancelClick = (item) => {
     setConfirmModal({
@@ -174,8 +182,6 @@ export default function MarketPage() {
       onConfirm: () => performCancel(item)
     });
   };
-
-
 
   const openDetails = (item) => { setSelected(item); setOpen(true); };
 
@@ -189,13 +195,13 @@ export default function MarketPage() {
                {role === 'reseller' ? "Acquista dal Producer." : "Esplora gli orologi in vendita."}
              </p>
            </div>
-           <button onClick={handleManualRefresh} disabled={loading} className="...">
+           <button onClick={handleManualRefresh} disabled={loading} className="px-4 py-2 bg-white border rounded shadow hover:bg-gray-50 text-sm font-bold text-[#4A0404]">
              {loading ? "Refreshing..." : "Refresh Market"}
            </button>
         </div>
 
         {listings.length === 0 ? (
-          <div className="..."> Nessun orologio in vendita. </div>
+          <div className="text-center py-10 text-gray-500 italic"> Nessun orologio in vendita. </div>
         ) : (
           <div className="grid gap-8 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
             {listings.map((item) => (

@@ -43,7 +43,6 @@ export async function getInventory(role, userAddress) {
   const targetAddr = String(userAddress).toLowerCase();
 
   try {
-    // 1. Chiede a FireFly i saldi
     const balances = await ffGetCore(role, "tokens/balances", {
       key: targetAddr, 
       balance: ">0",
@@ -54,25 +53,17 @@ export async function getInventory(role, userAddress) {
       return [];
     }
 
-    // 2. Processiamo i saldi con FILTRI DI SICUREZZA
     const promises = balances.map(async (entry) => {
       const rawId = entry.tokenIndex;
 
-      // FILTRO 1: Scartiamo le monete (senza ID) o errori
       if (!rawId) return null;
 
-      // FILTRO 2 (IL FIX): Controllo paranoico dell'owner.
-      // Se FireFly ci ha mandato per sbaglio l'orologio di qualcun altro, lo scartiamo qui.
-      // Controlliamo che la "key" del record corrisponda all'indirizzo che abbiamo chiesto.
       if (entry.key && String(entry.key).toLowerCase() !== targetAddr) {
-         // console.warn("Scartato token non appartenente all'utente:", entry);
          return null;
       }
 
-      // FILTRO 3: Sicurezza sul saldo > 0 (anche se l'abbiamo chiesto nell'API)
       if (Number(entry.balance) <= 0) return null;
 
-      // Se siamo arrivati qui, siamo sicuri che è nostro.
       const isCertified = await getCertifiedStatus(role, rawId);
 
       return {
@@ -84,7 +75,6 @@ export async function getInventory(role, userAddress) {
 
     const results = await Promise.all(promises);
     
-    // 3. Pulizia finale
     return results.filter(item => item !== null);
 
   } catch (err) {
