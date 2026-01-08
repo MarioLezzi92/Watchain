@@ -17,7 +17,10 @@ contract WatchNFT is ERC721, Ownable, EmergencyStop {
     /// @notice tokenId -> certificato
     mapping(uint256 => bool) public certified;
 
-    event ResellerSet(address indexed who, bool enabled);
+    // EVENTI SPECIFICI RICHIESTI
+    event ResellerEnabled(address indexed who);
+    event ResellerDisabled(address indexed who);
+    
     event Manufactured(uint256 indexed tokenId, address indexed to);
     event Certified(uint256 indexed tokenId, address indexed by);
 
@@ -41,13 +44,33 @@ contract WatchNFT is ERC721, Ownable, EmergencyStop {
     }
 
     // ------------------------
+    // Emergency Control (NUOVO)
+    // ------------------------
+
+    /// @notice Abilita o disabilita il blocco di emergenza della Produzione
+    /// @dev Emette automaticamente gli eventi Paused(account) o Unpaused(account)
+    function setEmergencyStop(bool status) external onlyOwner {
+        if (status) {
+            _pause(); // Blocca: manufacture, certify
+        } else {
+            _unpause(); // Riapre le operazioni
+        }
+    }
+
+    // ------------------------
     // Admin
     // ------------------------
 
     function setReseller(address who, bool enabled) external onlyOwner {
         require(who != address(0), "reseller=0");
         reseller[who] = enabled;
-        emit ResellerSet(who, enabled);
+        
+        // Emissione evento specifico in base all'azione
+        if (enabled) {
+            emit ResellerEnabled(who);
+        } else {
+            emit ResellerDisabled(who);
+        }
     }
 
     // ------------------------
@@ -70,5 +93,4 @@ contract WatchNFT is ERC721, Ownable, EmergencyStop {
         certified[tokenId] = true;
         emit Certified(tokenId, msg.sender);
     }
-
 }

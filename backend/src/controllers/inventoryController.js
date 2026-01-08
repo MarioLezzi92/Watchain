@@ -33,16 +33,53 @@ export const certify = async (req, res) => {
     const role = req.user.role;
     const address = req.user.sub;
 
-    // se non è ancora reseller on-chain -> setReseller(address,true) (firmato dal producer)
-    await inventoryService.ensureReseller(address);
+    if (role !== "reseller") {
+      return res.status(403).json({ success: false, error: "Only reseller can certify" });
+    }
 
-    // ora la tx viene firmata dal reseller (address) e non reverte "only reseller"
     const result = await inventoryService.certifyNft(role, address, tokenId);
-
-    return res.json(result);
+    return res.json({ success: true, result });
   } catch (err) {
-    return res.status(400).json({ error: err.message });
+    return res.status(400).json({ success: false, error: err.message });
+  }
+};
+
+export const setReseller = async (req, res) => {
+  try {
+    const { role } = req.user;
+
+    if (role !== "producer") {
+      return res.status(403).json({ success: false, error: "Only producer can set reseller" });
+    }
+
+    const { who, enabled = true } = req.body;
+    if (!who) {
+      return res.status(400).json({ success: false, error: "Missing 'who' address" });
+    }
+
+    const result = await inventoryService.setResellerRole(who, Boolean(enabled));
+    return res.json({ success: true, result });
+  } catch (err) {
+    return res.status(400).json({ success: false, error: err.message });
   }
 };
 
 
+export const getFactoryStatus = async (req, res) => {
+  try {
+    const result = await inventoryService.getFactoryStatus();
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+export const setFactoryEmergency = async (req, res) => {
+  try {
+    const { status } = req.body;
+    const result = await inventoryService.setFactoryEmergency(status);
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};

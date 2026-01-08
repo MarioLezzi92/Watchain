@@ -51,3 +51,10 @@ export async function buy(tokenId) {
 export async function cancelListing(tokenId) {
   return await apiPost("/market/cancel", { tokenId: String(tokenId) });
 }
+
+export async function setReseller(who, enabled = true) {
+  return await apiPost("/inventory/set-reseller", {
+    who,
+    enabled,
+  });
+}

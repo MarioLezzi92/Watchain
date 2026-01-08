@@ -1,5 +1,7 @@
+import React, { useState, useEffect } from "react";
 import { logout } from "../lib/auth";
 import { useNavigate, useLocation } from "react-router-dom";
+import { apiGet } from "../lib/api"; // Importiamo apiGet per controllare lo stato
 import { 
   UserCircleIcon, 
   ArrowRightOnRectangleIcon, 
@@ -13,22 +15,71 @@ function shortAddr(a) {
   return s.length > 12 ? `${s.slice(0, 6)}…${s.slice(-4)}` : s;
 }
 
+/**
+ * COMPONENTE: SystemAlert
+ * Mostra il banner rosso se c'è un'emergenza attiva.
+ */
+function SystemAlert({ marketPaused, factoryPaused }) {
+  if (!marketPaused && !factoryPaused) return null;
+
+  return (
+    <div className="bg-red-600 text-white px-4 py-3 shadow-xl flex items-center justify-center gap-3 animate-in slide-in-from-top duration-300 relative z-30">
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-6 h-6 animate-pulse">
+        <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+      </svg>
+      <span className="font-bold tracking-wide uppercase text-sm">
+        ATTENZIONE: 
+        {marketPaused && factoryPaused ? " MANUTENZIONE TOTALE IN CORSO. SISTEMA BLOCCATO." : 
+         marketPaused ? " IL MERCATO È TEMPORANEAMENTE SOSPESO." : 
+         " PRODUZIONE E CERTIFICAZIONI SOSPESE."}
+      </span>
+    </div>
+  );
+}
+
 export default function AppShell({ title = "WatchDApp", address, balanceLux, children }) {
   const navigate = useNavigate();
   const location = useLocation();
+
+  // --- STATO PER EMERGENCY STOP ---
+  const [marketPaused, setMarketPaused] = useState(false);
+  const [factoryPaused, setFactoryPaused] = useState(false);
 
   // --- LOGOUT ---
   const handleLogout = async () => {
     await logout();
   };
-  // ---------------------
+  
+  // --- CHECK STATUS SISTEMA ---
+  useEffect(() => {
+    const checkStatus = async () => {
+      try {
+        // Controlliamo in parallelo lo stato di Market e Factory
+        // Nota: usiamo .catch per evitare che un errore API rompa tutta la UI
+        const [m, f] = await Promise.all([
+          apiGet("/market/status").catch(() => ({ paused: false })),
+          apiGet("/factory/status").catch(() => ({ paused: false }))
+        ]);
+        setMarketPaused(!!m?.paused);
+        setFactoryPaused(!!f?.paused);
+      } catch (e) {
+        console.warn("Status check failed", e);
+      }
+    };
+
+    checkStatus();
+    
+    // Polling: ricontrolla ogni 10 secondi per aggiornare il banner in tempo reale
+    const interval = setInterval(checkStatus, 10000);
+    return () => clearInterval(interval);
+  }, [location.pathname]); // Aggiorna anche al cambio pagina
 
   const isMarket = location.pathname === "/market";
 
   return (
     <div className="min-h-screen w-full bg-[#f2e9d0] text-zinc-900 font-sans flex flex-col">
       
-      {/* HEADER */}
+      {/* HEADER (Sticky) */}
       <header className="sticky top-0 z-40 w-full shadow-lg bg-[#4A0404] text-[#f2e9d0] border-b border-[#D4AF37]/30">
         <div className="w-full max-w-7xl mx-auto px-6 h-20 flex items-center justify-between relative">
           
@@ -109,6 +160,9 @@ export default function AppShell({ title = "WatchDApp", address, balanceLux, chi
           </div>
         </div>
       </header>
+
+      {/* SYSTEM ALERT: Inserito qui, sotto l'header */}
+      <SystemAlert marketPaused={marketPaused} factoryPaused={factoryPaused} />
 
       {/* MAIN */}
       <main className="w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-10 py-12 flex-grow">

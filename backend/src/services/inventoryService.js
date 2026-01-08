@@ -131,13 +131,25 @@ export async function enableResellerRole(resellerAddress) {
   });
 }
 
-/**
- * Assicura che un utente sia abilitato come Reseller prima di procedere.
- */
-export async function ensureReseller(address) {
-  const isReseller = await checkResellerStatus(address);
-  if (!isReseller) {
-    await enableResellerRole(address); 
+
+export async function setResellerRole(who, enabled) {
+  if (!who) throw new Error("Missing address");
+  return ffInvoke("producer", "WatchNFT_API", "setReseller", {
+    who,
+    enabled: Boolean(enabled),
+  });
+}
+
+export async function getFactoryStatus() {
+  try {
+    const res = await ffQuery("producer", NFT_API, "paused", {}, config.producerAddr);
+    return { paused: parseBool(unwrapFFOutput(res)) };
+  } catch (err) {
+    console.error("Errore getFactoryStatus:", err);
+    return { paused: false };
   }
-  return true;
+}
+
+export async function setFactoryEmergency(status) {
+  return ffInvoke("producer", NFT_API, "setEmergencyStop", { status: String(status) }, config.producerAddr);
 }

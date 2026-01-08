@@ -120,3 +120,22 @@ export const withdraw = async (req, res) => {
     res.status(400).json({ error: err.message });
   }
 };
+
+export const getEmergencyStatus = async (req, res) => {
+  try {
+    const result = await marketService.getMarketStatus();
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+export const setEmergencyStop = async (req, res) => {
+  try {
+    const { status } = req.body; // true/false
+    const result = await marketService.setMarketEmergency(status);
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};

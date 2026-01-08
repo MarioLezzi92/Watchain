@@ -10,5 +10,9 @@ router.use(requireAuth);
 router.get("/", inventoryController.getMyInventory);
 router.post("/mint", inventoryController.mint);
 router.post("/certify", inventoryController.certify);
+router.post("/set-reseller", inventoryController.setReseller);
+
+router.get('/status', inventoryController.getFactoryStatus);
+router.post('/emergency', inventoryController.setFactoryEmergency);
 
 export default router;

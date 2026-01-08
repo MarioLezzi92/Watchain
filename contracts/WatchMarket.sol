@@ -35,9 +35,7 @@ contract WatchMarket is Ownable, ReentrancyGuard, EmergencyStop, PullPayments {
         SaleType saleType;
     }
 
-    // Questa variabile memorizza l'indirizzo del contratto NFT.
     IWatchNFT public immutable watch;
-    // -------------------------------------
 
     mapping(uint256 => Listing) public listings;
 
@@ -55,14 +53,26 @@ contract WatchMarket is Ownable, ReentrancyGuard, EmergencyStop, PullPayments {
     }
 
     // ------------------------
+    // Emergency Control (NUOVO)
+    // ------------------------
+
+    /// @notice Abilita o disabilita il blocco di emergenza del Mercato
+    /// @dev Emette automaticamente gli eventi Paused(account) o Unpaused(account) definiti in EmergencyStop
+    function setEmergencyStop(bool status) external onlyOwner {
+        if (status) {
+            _pause(); // Blocca: listPrimary, listSecondary, buy, cancelListing, withdraw
+        } else {
+            _unpause(); // Riapre tutte le funzionalità
+        }
+    }
+
+    // ------------------------
     // Listing Functions
     // ------------------------
 
     function listPrimary(uint256 tokenId, uint256 price) external nonReentrant whenNotPaused {
         require(price > 0, "Price must be > 0");
-        // Verifica che chi chiama sia il proprietario dell'NFT
         require(watch.ownerOf(tokenId) == msg.sender, "Not owner");
-        // Verifica che sia il Producer (Factory)
         require(msg.sender == watch.factory(), "Only Producer can list Primary");
 
         listings[tokenId] = Listing({
@@ -109,18 +119,12 @@ contract WatchMarket is Ownable, ReentrancyGuard, EmergencyStop, PullPayments {
         require(l.price > 0, "Price not set");
         require(msg.sender != l.seller, "Seller cannot buy own item");
 
-        // 2. EFFECTS (Cruciale: aggiorniamo lo stato PRIMA di muovere fondi)
-        delete listings[tokenId]; 
-
-        // Sistema PullPayments: Accreditiamo i fondi al venditore (non glieli inviamo direttamente)
+        // 2. EFFECTS
+        delete listings[tokenId];
         _accrueCredit(l.seller, l.price);
 
         // 3. INTERACTIONS
-        // Preleviamo i soldi dal compratore verso il contratto Market
         paymentToken.safeTransferFrom(msg.sender, address(this), l.price);
-
-        // Trasferiamo l'NFT dal venditore al compratore
-        // Nota: Il venditore deve aver approvato il Market per questo token
         watch.safeTransferFrom(l.seller, msg.sender, tokenId);
 
         emit Purchased(tokenId, msg.sender, l.seller, l.price, l.saleType);
@@ -143,13 +147,11 @@ contract WatchMarket is Ownable, ReentrancyGuard, EmergencyStop, PullPayments {
     // Emergency Recover
     // ------------------------
     
-    // Recupera ETH inviati per errore (non dovrebbe averne, usa ERC20)
     function recoverETH(address payable to, uint256 amount) external onlyOwner whenPaused {
         require(to != address(0), "Invalid address");
         to.sendValue(amount);
     }
 
-    // Recupera token ERC20 inviati per errore (diversi dal token di pagamento)
     function recoverERC20(address token, address to, uint256 amount) external onlyOwner whenPaused {
         require(token != address(paymentToken), "Cannot recover payment token");
         IERC20(token).safeTransfer(to, amount);

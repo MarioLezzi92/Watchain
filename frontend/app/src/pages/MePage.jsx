@@ -2,17 +2,29 @@ import React, { useMemo, useState, useEffect } from "react";
 import AppShell from "../app/AppShell";
 import { getBalance } from "../services/walletService";
 import { apiGet, apiPost } from "../lib/api";
+
+// --- COMPONENTS ---
 import WatchCard from "../components/domain/WatchCard";
 import WatchDetailsModal from "../components/domain/WatchDetailsModal";
+import SecurityModal from "../components/domain/SecurityModal"; // Assicurati di aver creato questo file
+import ResellerModal from "../components/domain/ResellerModal"; // Assicurati di aver creato questo file
+
+// --- UI COMPONENTS ---
 import ConfirmModal from "../components/ui/ConfirmModal";
 import SuccessModal from "../components/ui/SuccessModal";
+import ErrorModal from "../components/ui/ErrorModal"; // Importiamo quello che hai caricato
+
+// --- ICONS ---
 import {
   PlusIcon,
   WrenchScrewdriverIcon,
   ArrowPathIcon,
   BanknotesIcon,
+  ShieldCheckIcon, 
+  UsersIcon,
 } from "@heroicons/react/24/outline";
-import { io } from "socket.io-client"; 
+
+import { io } from "socket.io-client";
 import {
   mintWatch,
   listPrimary,
@@ -24,7 +36,7 @@ import {
   withdrawCredits,
 } from "../services/marketService";
 
-
+// --- HELPERS ---
 function formatLuxFromWei(weiStr) {
   try {
     return (BigInt(String(weiStr || "0")) / 10n ** 18n).toString();
@@ -40,33 +52,42 @@ function lc(x) {
 export default function MePage() {
   const role = useMemo(() => String(localStorage.getItem("role") || "").toLowerCase(), []);
   const address = useMemo(() => String(localStorage.getItem("address") || ""), []);
+  
+  // --- STATO DATI ---
   const [balanceLux, setBalanceLux] = useState("-");
-
   const [pendingCredits, setPendingCredits] = useState("0");
-
   const [inventory, setInventory] = useState([]);
   const [selected, setSelected] = useState(null);
-  const [open, setOpen] = useState(false);
+  
+  // --- STATO MODALI UI ---
+  const [openDetail, setOpenDetail] = useState(false);
+  const [openSecurity, setOpenSecurity] = useState(false);
+  const [openReseller, setOpenReseller] = useState(false);
+  
+  // --- STATO SISTEMA & CARICAMENTO ---
   const [busy, setBusy] = useState(false);
-
-  const [loadingBalance, setLoadingBalance] = useState(false);
+  const [marketPaused, setMarketPaused] = useState(false);
+  const [factoryPaused, setFactoryPaused] = useState(false);
   const [loadingInventory, setLoadingInventory] = useState(false);
+  const [loadingBalance, setLoadingBalance] = useState(false);
 
-  const [confirmModal, setConfirmModal] = useState({
-    isOpen: false,
-    title: "",
-    message: "",
-    onConfirm: null,
-    onClose: null,
-  });
+  // --- STATO FEEDBACK ---
+  const [confirmModal, setConfirmModal] = useState({ isOpen: false, title: "", message: "", onConfirm: null });
   const [successModal, setSuccessModal] = useState({ isOpen: false, message: "" });
+  const [errorModal, setErrorModal] = useState({ isOpen: false, title: "", message: "" });
+
+  // --- REFRESH LOGIC ---
+  const refreshAll = () => {
+    refreshBalance(true);
+    refreshInventory(true);
+    refreshSecurityStatus();
+  };
 
   const refreshBalance = async (silent = true) => {
     if (!silent) setLoadingBalance(true);
     try {
       const b = await getBalance();
       setBalanceLux(String(b?.lux ?? "-"));
-
       const c = await getCredits();
       setPendingCredits(c?.creditsWei || "0");
     } catch (e) {
@@ -76,26 +97,37 @@ export default function MePage() {
     }
   };
 
+  const refreshSecurityStatus = async () => {
+    try {
+      const [m, f] = await Promise.all([
+        apiGet("/market/status").catch(() => ({ paused: false })),
+        apiGet("/factory/status").catch(() => ({ paused: false }))
+      ]);
+      setMarketPaused(!!m?.paused);
+      setFactoryPaused(!!f?.paused);
+    } catch (e) {
+      console.warn("Security check failed", e);
+    }
+  };
+
   const refreshInventory = async (silent = true) => {
     if (!silent) setLoadingInventory(true);
     try {
       const [myItems, activeListings] = await Promise.all([apiGet("/inventory"), getListings()]);
-      const myItemsArr = Array.isArray(myItems) ? myItems : [];
       const listingsArr = Array.isArray(activeListings) ? activeListings : [];
+      const myItemsArr = Array.isArray(myItems) ? myItems : [];
 
       const normalized = myItemsArr.map((item) => {
         const marketListing = listingsArr.find((l) => String(l.tokenId) === String(item.tokenId));
         const rawPrice = marketListing ? String(marketListing.price) : String(item.price || "0");
         const isListed = !!marketListing || rawPrice !== "0";
-        const priceLux = formatLuxFromWei(rawPrice);
-
         return {
           tokenId: String(item.tokenId),
           owner: String(item.owner || ""),
           seller: String(item.seller || ""),
           certified: Boolean(item.certified),
           priceWei: rawPrice,
-          priceLux: isListed ? priceLux : null,
+          priceLux: isListed ? formatLuxFromWei(rawPrice) : null,
           saleType: item.saleType,
           isMineSeller: lc(item.seller) === lc(address),
           isMineOwner: lc(item.owner) === lc(address),
@@ -109,29 +141,28 @@ export default function MePage() {
     }
   };
 
-  // --- NUOVA LOGICA SOCKET ---
+  // --- INIT & SOCKET ---
   useEffect(() => {
-    refreshBalance(true);
-    refreshInventory(true);
-
+    refreshAll();
     const socket = io("http://localhost:3001");
-
     socket.on("market-update", (data) => {
-      console.log("⚡ EVENTO PER ME-PAGE:", data);
-      refreshBalance(true);
-      refreshInventory(true);
+      console.log("⚡ EVENTO:", data);
+      refreshAll();
     });
-
     return () => socket.disconnect();
   }, []);
 
-
-  const handleManualBalance = () => refreshBalance(false);
-  const handleManualInventory = () => refreshInventory(false);
-  
-  const openDetails = (item) => {
-    setSelected(item);
-    setOpen(true);
+  // --- ERROR HANDLER ---
+  const handleError = (e, title = "Errore") => {
+    const msg = e.message || String(e);
+    const isPaused = msg.toLowerCase().includes("paused") || msg.toLowerCase().includes("emergency");
+    setErrorModal({
+      isOpen: true,
+      title: isPaused ? "Operazione Sospesa" : title,
+      message: isPaused 
+        ? "Impossibile procedere: il sistema è attualmente in stato di EMERGENZA (Paused)." 
+        : msg
+    });
   };
 
   const ensureMarketApproval = async () => {
@@ -140,50 +171,70 @@ export default function MePage() {
       if (isApproved) return true;
 
       return await new Promise((resolve) => {
-        const finish = (val) => {
-          setConfirmModal({ isOpen: false, title: "", message: "", onConfirm: null, onClose: null });
-          resolve(val);
-        };
-
         setConfirmModal({
           isOpen: true,
           title: "Autorizzazione Necessaria",
-          message: "Per mettere in vendita i tuoi orologi, devi autorizzare il Marketplace a gestire i tuoi NFT. Questa operazione va fatta solo una volta. Vuoi procedere?",
+          message: "Devi autorizzare il Marketplace a gestire i tuoi NFT. Procedere?",
           onConfirm: async () => {
             try {
               setBusy(true);
               await apiPost("/market/approve-market");
-              setBusy(false);
-              finish(true);
+              resolve(true);
             } catch (err) {
+              handleError(err, "Errore Approvazione");
+              resolve(false);
+            } finally {
               setBusy(false);
-              alert("Errore approvazione: " + (err?.response?.data?.error || err.message));
-              finish(false);
+              setConfirmModal((prev) => ({ ...prev, isOpen: false }));
             }
           },
           onClose: () => {
-            setBusy(false);
-            finish(false);
+            resolve(false);
+            setConfirmModal((prev) => ({ ...prev, isOpen: false }));
           },
         });
       });
     } catch (e) {
-      console.error("Errore controllo approvazione:", e);
-      setBusy(false);
+      console.error(e);
       return false;
     }
   };
 
-  // --- AZIONI ---
+  // --- AZIONI CORE ---
+  
   const performMint = async () => {
     setBusy(true);
     try {
       await mintWatch();
-      setConfirmModal((prev) => ({ ...prev, isOpen: false }));
       setSuccessModal({ isOpen: true, message: "Orologio creato con successo!" });
+      setConfirmModal((p) => ({ ...p, isOpen: false }));
     } catch (e) {
-      setConfirmModal((prev) => ({ ...prev, isOpen: false }));
-      alert("Errore Mint: " + e.message);
+      setConfirmModal((p) => ({ ...p, isOpen: false }));
+      handleError(e, "Errore Mint");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const performList = async (item, price) => {
+    try {
+      if (!(await ensureMarketApproval())) return;
+      setBusy(true);
+      
+      if (item.priceLux) {
+        await cancelListing(item.tokenId);
+        await new Promise(r => setTimeout(r, 1000));
+      }
+
+      if (role === "producer") await listPrimary(item.tokenId, price);
+      else await listSecondary(item.tokenId, price);
+
+      setSuccessModal({ isOpen: true, message: "Listato con successo!" });
+      setOpenDetail(false);
+      setConfirmModal((p) => ({ ...p, isOpen: false }));
+    } catch (e) {
+      setConfirmModal((p) => ({ ...p, isOpen: false }));
+      handleError(e, "Errore Listing");
     } finally {
       setBusy(false);
     }
@@ -193,43 +244,21 @@ export default function MePage() {
     setBusy(true);
     try {
       await certify(item.tokenId);
-      setConfirmModal((prev) => ({ ...prev, isOpen: false }));
       setSuccessModal({ isOpen: true, message: `Orologio #${item.tokenId} certificato!` });
-      setOpen(false);
+      setOpenDetail(false);
+      setConfirmModal((p) => ({ ...p, isOpen: false }));
     } catch (e) {
-      setConfirmModal((prev) => ({ ...prev, isOpen: false }));
-      alert("Errore Certificazione: " + e.message);
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const performList = async (item, price) => {
-    try {
-      const approved = await ensureMarketApproval();
-      if (!approved) {
-        setBusy(false);
-        return;
-      }
-
-      setBusy(true);
-      if (item.priceLux) {
-        await cancelListing(item.tokenId);
-        await new Promise((r) => setTimeout(r, 1000));
-      }
-
-      if (role === "producer") {
-        await listPrimary(item.tokenId, price);
+      setConfirmModal((p) => ({ ...p, isOpen: false }));
+      const msg = e.message || "";
+      if (msg.toLowerCase().includes("only reseller")) {
+        setErrorModal({
+          isOpen: true,
+          title: "Non Autorizzato",
+          message: "Il tuo indirizzo non è abilitato come Reseller."
+        });
       } else {
-        await listSecondary(item.tokenId, price);
+        handleError(e, "Errore Certificazione");
       }
-
-      setConfirmModal((prev) => ({ ...prev, isOpen: false, onConfirm: null }));
-      setSuccessModal({ isOpen: true, message: "Listato con successo!" });
-      setOpen(false);
-    } catch (e) {
-      setConfirmModal((prev) => ({ ...prev, isOpen: false, onConfirm: null }));
-      alert("Errore Listing: " + (e?.response?.data?.error || e.message));
     } finally {
       setBusy(false);
     }
@@ -239,12 +268,12 @@ export default function MePage() {
     setBusy(true);
     try {
       await cancelListing(item.tokenId);
-      setConfirmModal((prev) => ({ ...prev, isOpen: false }));
-      setSuccessModal({ isOpen: true, message: "Listing cancellato." });
-      setOpen(false);
+      setSuccessModal({ isOpen: true, message: "Listing rimosso." });
+      setOpenDetail(false);
+      setConfirmModal((p) => ({ ...p, isOpen: false }));
     } catch (e) {
-      setConfirmModal((prev) => ({ ...prev, isOpen: false }));
-      alert("Errore: " + e.message);
+      setConfirmModal((p) => ({ ...p, isOpen: false }));
+      handleError(e, "Errore Cancellazione");
     } finally {
       setBusy(false);
     }
@@ -254,201 +283,266 @@ export default function MePage() {
     setBusy(true);
     try {
       await withdrawCredits();
-      setConfirmModal((prev) => ({ ...prev, isOpen: false }));
-      setSuccessModal({ isOpen: true, message: "Crediti prelevati con successo!" });
+      setSuccessModal({ isOpen: true, message: "Crediti prelevati!" });
+      setConfirmModal((p) => ({ ...p, isOpen: false }));
     } catch (e) {
-      setConfirmModal((prev) => ({ ...prev, isOpen: false }));
-      alert("Errore Prelievo: " + e.message);
+      setConfirmModal((p) => ({ ...p, isOpen: false }));
+      handleError(e, "Errore Prelievo");
     } finally {
       setBusy(false);
     }
   };
 
-  // --- HANDLERS ---
-  const handleMintClick = () => {
+  // --- ACTIONS PER SECURITY MODAL ---
+  const handleToggleMarket = async () => {
+    const action = marketPaused ? "RIATTIVARE" : "BLOCCARE";
     setConfirmModal({
       isOpen: true,
-      title: "Atelier Produzione",
-      message: "Vuoi creare (Mint) un nuovo Orologio grezzo?",
-      onConfirm: performMint,
-      onClose: () => setConfirmModal((prev) => ({ ...prev, isOpen: false })),
+      title: "Sicurezza Market",
+      message: `Confermi di ${action} il Marketplace?`,
+      onConfirm: async () => {
+        try {
+          setBusy(true);
+          await apiPost("/market/emergency", { status: !marketPaused });
+          await refreshSecurityStatus();
+          setConfirmModal((p) => ({ ...p, isOpen: false }));
+        } catch (e) {
+          handleError(e);
+        } finally {
+          setBusy(false);
+        }
+      },
+      onClose: () => setConfirmModal((p) => ({ ...p, isOpen: false }))
     });
   };
 
-  const handleCertifyClick = (item) => {
+  const handleToggleFactory = async () => {
+    const action = factoryPaused ? "RIATTIVARE" : "BLOCCARE";
     setConfirmModal({
       isOpen: true,
-      title: "Certificazione",
-      message: `Vuoi emettere il Certificato di Autenticità per l'orologio #${item.tokenId}?`,
-      onConfirm: () => performCertify(item),
-      onClose: () => setConfirmModal((prev) => ({ ...prev, isOpen: false })),
-    });
-  };
-
-  const handleListClick = (item, price) => {
-    if (!price || Number(price) <= 0) return alert("Inserisci un prezzo valido");
-    const marketName = role === "producer" ? "Mercato Primario" : "Mercato Secondario";
-    setConfirmModal({
-      isOpen: true,
-      title: "Pubblicazione",
-      message: `Vuoi mettere in vendita l'orologio #${item.tokenId} sul ${marketName} a ${price} LUX?`,
-      onConfirm: () => performList(item, price),
-      onClose: () => setConfirmModal((prev) => ({ ...prev, isOpen: false })),
-    });
-  };
-
-  const handleCancelClick = (item) => {
-    setConfirmModal({
-      isOpen: true,
-      title: "Ritiro Orologio",
-      message: `Ritirare l'orologio #${item.tokenId} dalla vendita?`,
-      onConfirm: () => performCancel(item),
-      onClose: () => setConfirmModal((prev) => ({ ...prev, isOpen: false })),
-    });
-  };
-
-  const handleWithdrawClick = () => {
-    setConfirmModal({
-      isOpen: true,
-      title: "Incasso Crediti",
-      message: `Vuoi trasferire ${pendingCredits} LUX dal Marketplace al tuo Wallet?`,
-      onConfirm: performWithdraw,
-      onClose: () => setConfirmModal((prev) => ({ ...prev, isOpen: false })),
+      title: "Sicurezza Factory",
+      message: `Confermi di ${action} la Produzione?`,
+      onConfirm: async () => {
+        try {
+          setBusy(true);
+          await apiPost("/factory/emergency", { status: !factoryPaused });
+          await refreshSecurityStatus();
+          setConfirmModal((p) => ({ ...p, isOpen: false }));
+        } catch (e) {
+          handleError(e);
+        } finally {
+          setBusy(false);
+        }
+      },
+      onClose: () => setConfirmModal((p) => ({ ...p, isOpen: false }))
     });
   };
 
   return (
     <AppShell title="WatchDApp" address={address} balanceLux={balanceLux}>
-      <div className="space-y-12">
-        {role === "producer" && (
-          <div className="relative bg-[#4A0404] text-[#FDFBF7] rounded-3xl p-8 shadow-xl overflow-hidden border border-[#5e0a0a]">
-            <div className="relative z-10 flex flex-col md:flex-row items-center justify-between gap-6">
-              <div>
-                <div className="flex items-center gap-2 mb-2 text-[#D4AF37]">
-                  <WrenchScrewdriverIcon className="h-5 w-5" />
-                  <span className="text-xs font-bold uppercase tracking-widest">Producer Mode</span>
-                </div>
-                <h2 className="text-3xl font-serif font-bold">Atelier di Produzione</h2>
-                <p className="text-red-100/70 mt-1">Conia nuovi orologi da immettere nel mercato.</p>
-              </div>
-              <button
-                onClick={handleMintClick}
-                disabled={busy}
-                className="px-6 py-3 bg-[#D4AF37] hover:bg-[#c49f27] text-[#4A0404] font-bold rounded-xl shadow-lg transition flex items-center gap-2 disabled:opacity-50"
-              >
-                {busy ? "Working..." : <><PlusIcon className="h-5 w-5" /> Mint New Watch</>}
-              </button>
-            </div>
-          </div>
-        )}
-
-        <div className="grid gap-8 lg:grid-cols-12 items-start">
-          <div className="lg:col-span-4 space-y-6">
-            <div className="rounded-3xl bg-[#4A0404] text-[#FDFBF7] p-8 shadow-xl sticky top-28 border border-[#5e0a0a]">
-              <div className="text-3xl font-serif font-bold tracking-wide mb-6">Il tuo Profilo</div>
-              <div className="space-y-4 text-sm">
-                <div className="bg-black/20 p-4 rounded-xl border border-white/5">
+      
+      <div className="grid gap-8 lg:grid-cols-12 items-start">
+        
+        {/* --- COLONNA SINISTRA: Profilo & Strumenti --- */}
+        <div className="lg:col-span-4 space-y-6">
+          <div className="rounded-3xl bg-[#4A0404] text-[#FDFBF7] p-8 shadow-xl sticky top-28 border border-[#5e0a0a]">
+            <div className="text-3xl font-serif font-bold tracking-wide mb-6">Il tuo Profilo</div>
+            
+            {/* Info Wallet */}
+            <div className="space-y-4 text-sm mb-8">
+               <div className="bg-black/20 p-4 rounded-xl border border-white/5">
                   <div className="text-red-200/80 text-xs uppercase tracking-wider font-bold mb-1">Ruolo</div>
                   <div className="text-white font-mono text-lg font-bold capitalize">{role}</div>
-                </div>
-                <div className="bg-black/20 p-4 rounded-xl border border-white/5">
+               </div>
+               <div className="bg-black/20 p-4 rounded-xl border border-white/5">
                   <div className="text-red-200/80 text-xs uppercase tracking-wider font-bold mb-1">Indirizzo</div>
                   <div className="font-mono text-zinc-300 break-all text-xs">{address}</div>
-                </div>
-                <div className="bg-black/20 p-4 rounded-xl border border-white/5">
-                  <div className="text-red-200/80 text-xs uppercase tracking-wider font-bold mb-1">Saldo Wallet</div>
-                  <div className="text-[#D4AF37] text-2xl font-bold">{balanceLux} LUX</div>
-                </div>
+               </div>
+               <div className="bg-black/20 p-4 rounded-xl border border-white/5">
+                  <div className="text-red-200/80 text-xs uppercase tracking-wider font-bold mb-1">Saldo</div>
+                  <div className="text-[#D4AF37] text-2xl font-bold flex justify-between items-center">
+                    {balanceLux} LUX
+                    <button onClick={() => refreshBalance(false)} disabled={loadingBalance}>
+                        <ArrowPathIcon className={`h-5 w-5 text-white/50 hover:text-white ${loadingBalance ? 'animate-spin' : ''}`}/>
+                    </button>
+                  </div>
+               </div>
 
-                {pendingCredits !== "0" && (
-                  <div className="bg-[#1A472A]/40 p-4 rounded-xl border border-[#D4AF37]/50 animate-pulse">
+               {/* Box Prelievo Crediti */}
+               {pendingCredits !== "0" && (
+                  <div className="bg-[#1A472A]/40 p-4 rounded-xl border border-[#D4AF37]/50 animate-pulse mt-4">
                     <div className="text-[#D4AF37] text-xs uppercase tracking-wider font-bold mb-1 flex items-center gap-1">
                       <BanknotesIcon className="h-4 w-4" /> Vendite da Incassare
                     </div>
                     <div className="text-white text-xl font-bold mb-3">{pendingCredits} LUX</div>
                     <button
-                      onClick={handleWithdrawClick}
+                      onClick={() => setConfirmModal({
+                        isOpen:true, title:"Incasso Crediti", message:`Prelevare ${pendingCredits} LUX?`,
+                        onConfirm: performWithdraw, onClose: () => setConfirmModal({isOpen:false})
+                      })}
                       disabled={busy}
                       className="w-full py-2 bg-[#D4AF37] hover:bg-[#c49f27] text-[#4A0404] font-bold rounded-lg text-xs uppercase tracking-wide shadow-md"
                     >
                       Preleva Ora
                     </button>
                   </div>
-                )}
-              </div>
-              <div className="mt-6 flex gap-3">
-                <button
-                  onClick={handleManualBalance}
-                  disabled={loadingBalance}
-                  className="flex-1 flex justify-center items-center gap-2 text-xs px-4 py-3 rounded-xl border-2 border-[#D4AF37] text-[#D4AF37] hover:bg-[#D4AF37] hover:text-[#4A0404] transition font-bold uppercase tracking-wide disabled:opacity-50 shadow-lg shadow-black/20"
-                >
-                  {loadingBalance && <ArrowPathIcon className="h-4 w-4 animate-spin" />}
-                  {loadingBalance ? "Aggiornamento..." : "Aggiorna Saldo"}
-                </button>
-              </div>
-            </div>
-          </div>
-
-          <div className="lg:col-span-8 space-y-6">
-            <div className="flex items-end justify-between gap-3 border-b border-[#4A0404]/10 pb-4">
-              <div>
-                <div className="text-[#4A0404] text-3xl font-serif font-bold">
-                  {role === "producer" ? "Vault Produzione" : "La tua Collezione"}
-                </div>
-                <div className="text-[#4A0404]/60 text-sm mt-1">
-                  {role === "producer" ? "Gestisci gli orologi coniati." : "I tuoi orologi."}
-                </div>
-              </div>
-              <button
-                onClick={handleManualInventory}
-                disabled={loadingInventory}
-                className="flex items-center gap-2 text-sm px-5 py-2.5 bg-white text-[#4A0404] font-bold rounded-xl shadow-md hover:shadow-xl hover:bg-[#4A0404] hover:text-white transition-all duration-300 disabled:opacity-50 border border-[#4A0404]/5"
-              >
-                {loadingInventory && <ArrowPathIcon className="h-4 w-4 animate-spin" />}
-                {loadingInventory ? "Refreshing..." : "Refresh"}
-              </button>
+               )}
             </div>
 
-            {inventory.length === 0 ? (
-              <div className="rounded-3xl border-2 border-dashed border-[#4A0404]/20 bg-[#FDFBF7] p-12 text-center text-[#4A0404]/50 font-serif italic text-lg">
-                Nessun orologio trovato.
-              </div>
-            ) : (
-              <div className="grid gap-6 sm:grid-cols-2 xl:grid-cols-3">
-                {inventory.map((it) => (
-                  <WatchCard key={it.tokenId} item={it} onOpen={openDetails} variant="inventory" />
-                ))}
-              </div>
+            {/* STRUMENTI AMMINISTRATIVI (Solo Producer) */}
+            {role === "producer" && (
+                <div className="border-t border-white/10 pt-6 space-y-3">
+                    <div className="text-[#D4AF37] text-xs font-bold uppercase tracking-widest mb-2 flex items-center gap-2">
+                        <WrenchScrewdriverIcon className="h-4 w-4"/> Admin Tools
+                    </div>
+                    
+                    <button 
+                        onClick={() => setOpenReseller(true)} 
+                        className="w-full flex items-center justify-between p-3 rounded-xl bg-[#5e0a0a] hover:bg-[#700c0c] transition border border-white/5 group"
+                    >
+                        <span className="text-sm font-bold flex items-center gap-2">
+                            <UsersIcon className="h-5 w-5 text-red-200"/> Gestisci Reseller
+                        </span>
+                        <ArrowPathIcon className="h-4 w-4 text-white/30 opacity-0 group-hover:opacity-100 -rotate-90 transition"/>
+                    </button>
+                    
+                    <button 
+                        onClick={() => setOpenSecurity(true)} 
+                        className="w-full flex items-center justify-between p-3 rounded-xl bg-[#5e0a0a] hover:bg-[#700c0c] transition border border-white/5 group"
+                    >
+                        <span className="text-sm font-bold flex items-center gap-2">
+                            <ShieldCheckIcon className="h-5 w-5 text-red-200"/> Sicurezza & Emergenza
+                        </span>
+                        <ArrowPathIcon className="h-4 w-4 text-white/30 opacity-0 group-hover:opacity-100 -rotate-90 transition"/>
+                    </button>
+                </div>
             )}
           </div>
         </div>
+
+        {/* --- COLONNA DESTRA: Inventario --- */}
+        <div className="lg:col-span-8 space-y-6">
+          
+          {/* Header Vault + Action Bar */}
+          <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 border-b border-[#4A0404]/10 pb-4">
+            <div>
+              <div className="text-[#4A0404] text-3xl font-serif font-bold">
+                {role === "producer" ? "Vault Produzione" : "La tua Collezione"}
+              </div>
+              <div className="text-[#4A0404]/60 text-sm mt-1">
+                {role === "producer" ? "Gestisci e conia nuovi orologi." : "Visualizza i tuoi acquisti."}
+              </div>
+            </div>
+            
+            <div className="flex gap-3">
+               {/* Tasto MINT (Solo Producer) */}
+               {role === "producer" && (
+                   <button 
+                     onClick={() => setConfirmModal({
+                        isOpen:true, title:"Nuovo Orologio", message:"Vuoi coniare un nuovo orologio?", 
+                        onConfirm: performMint, onClose: () => setConfirmModal({isOpen:false})
+                     })}
+                     disabled={busy || factoryPaused}
+                     className="flex items-center gap-2 px-5 py-2.5 bg-[#4A0404] text-[#FDFBF7] font-bold rounded-xl shadow-lg hover:bg-[#5e0a0a] disabled:opacity-50 transition"
+                   >
+                      <PlusIcon className="h-5 w-5"/> Mint
+                   </button>
+               )}
+               
+               {/* Tasto REFRESH */}
+               <button 
+                 onClick={() => refreshInventory(false)} 
+                 disabled={loadingInventory} 
+                 className="p-2.5 bg-white border border-[#4A0404]/10 rounded-xl text-[#4A0404] hover:bg-gray-50 transition shadow-sm"
+               >
+                  <ArrowPathIcon className={`h-5 w-5 ${loadingInventory ? 'animate-spin' : ''}`}/>
+               </button>
+            </div>
+          </div>
+
+          {/* Griglia Orologi */}
+          {inventory.length === 0 ? (
+            <div className="rounded-3xl border-2 border-dashed border-[#4A0404]/20 bg-[#FDFBF7] p-12 text-center text-[#4A0404]/50 font-serif italic">
+              {loadingInventory ? "Caricamento..." : "Nessun orologio trovato."}
+            </div>
+          ) : (
+            <div className="grid gap-6 sm:grid-cols-2 xl:grid-cols-3">
+              {inventory.map((it) => (
+                <WatchCard 
+                    key={it.tokenId} 
+                    item={it} 
+                    onOpen={(i) => { setSelected(i); setOpenDetail(true); }} 
+                    variant="inventory" 
+                />
+              ))}
+            </div>
+          )}
+        </div>
       </div>
 
-      <WatchDetailsModal
-        open={open}
-        onClose={() => setOpen(false)}
-        item={selected}
-        role={role}
-        onList={handleListClick}
-        onCancel={handleCancelClick}
-        onCertify={handleCertifyClick}
+      {/* --- MODALI --- */}
+      
+      {/* 1. Dettaglio Orologio */}
+      <WatchDetailsModal 
+        open={openDetail} 
+        onClose={() => setOpenDetail(false)} 
+        item={selected} 
+        role={role} 
+        onList={(item, p) => setConfirmModal({
+            isOpen:true, title:"Metti in Vendita", message:`Prezzo: ${p} LUX. Confermi?`,
+            onConfirm: () => performList(item, p), onClose: () => setConfirmModal({isOpen:false})
+        })}
+        onCancel={(item) => setConfirmModal({
+            isOpen:true, title:"Ritira Orologio", message:"Vuoi annullare la vendita?",
+            onConfirm: () => performCancel(item), onClose: () => setConfirmModal({isOpen:false})
+        })}
+        onCertify={(item) => setConfirmModal({
+            isOpen:true, title:"Certificazione", message:"Emettere certificato di autenticità?",
+            onConfirm: () => performCertify(item), onClose: () => setConfirmModal({isOpen:false})
+        })}
         busy={busy}
       />
-
-      <ConfirmModal
-        isOpen={confirmModal.isOpen}
-        title={confirmModal.title}
-        message={confirmModal.message}
-        onConfirm={confirmModal.onConfirm}
-        onClose={confirmModal.onClose || (() => setConfirmModal((prev) => ({ ...prev, isOpen: false, onConfirm: null, onClose: null })))}
-        busy={busy}
+      
+      {/* 2. Modali Admin (Nuovi) */}
+      <SecurityModal 
+         isOpen={openSecurity} 
+         onClose={() => setOpenSecurity(false)} 
+         marketPaused={marketPaused} 
+         factoryPaused={factoryPaused} 
+         onToggleMarket={handleToggleMarket} 
+         onToggleFactory={handleToggleFactory} 
+         busy={busy} 
+      />
+      
+      <ResellerModal 
+         isOpen={openReseller} 
+         onClose={() => setOpenReseller(false)} 
+         onDone={() => { refreshAll(); /* opzionale: chiudi modale */ }} 
       />
 
-      <SuccessModal
-        isOpen={successModal.isOpen}
-        message={successModal.message}
-        onClose={() => setSuccessModal((prev) => ({ ...prev, isOpen: false }))}
+      {/* 3. Feedback Modals */}
+      <ConfirmModal 
+        isOpen={confirmModal.isOpen} 
+        title={confirmModal.title} 
+        message={confirmModal.message} 
+        onConfirm={confirmModal.onConfirm} 
+        onClose={confirmModal.onClose || (() => setConfirmModal(p => ({...p, isOpen:false})))} 
+        busy={busy} 
       />
+      
+      <SuccessModal 
+        isOpen={successModal.isOpen} 
+        message={successModal.message} 
+        onClose={() => setSuccessModal({isOpen:false})} 
+      />
+      
+      <ErrorModal 
+        isOpen={errorModal.isOpen} 
+        title={errorModal.title} 
+        message={errorModal.message} 
+        onClose={() => setErrorModal({isOpen:false})} 
+      />
+
     </AppShell>
   );
 }

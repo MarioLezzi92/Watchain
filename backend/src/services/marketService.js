@@ -140,3 +140,17 @@ export async function getPendingCredits(role, address) {
 export async function withdrawCredits(role, address) {
   return ffInvoke(role, MARKET_API, "withdraw", {}, address);
 }
+
+export async function getMarketStatus() {
+  try {
+    const res = await ffQuery("producer", MARKET_API, "paused", {}, config.producerAddr);
+    return { paused: parseBool(unwrapFFOutput(res)) };
+  } catch (err) {
+    console.error("Errore getMarketStatus:", err);
+    return { paused: false };
+  }
+}
+
+export async function setMarketEmergency(status) {
+  return ffInvoke("producer", MARKET_API, "setEmergencyStop", { status: String(status) }, config.producerAddr);
+}

@@ -23,16 +23,13 @@ export default function Login() {
     setErr("");
     setLoading(true);
     try {
-      // 1) Connessione al Wallet [cite: 11, 32]
       const { address } = await connectMetamask();
 
-      // 2) Recupero del Nonce dal server per prevenire Replay Attack [cite: 83, 84, 136]
       const resNonce = await apiGet(`/auth/nonce?address=${address}`);
       const nonce = resNonce?.nonce; 
 
       if (!nonce) throw new Error("Nonce non ricevuto dal backend.");
 
-      // 3) Firma del messaggio (Standard personal_sign richiesto dal lab) [cite: 44, 152, 163]
       const message = `Login to WatchDApp\nNonce: ${nonce}`;
       const signature = await window.ethereum.request({
         method: "personal_sign",
@@ -47,12 +44,10 @@ export default function Login() {
 
       if (!token || !role) throw new Error("Login fallito: credenziali non valide.");
 
-      // 5) Salvataggio sessione nel browser 
       localStorage.setItem("token", token);
       localStorage.setItem("role", role);
       localStorage.setItem("address", address);
 
-      // 6) Redirect alla Dashboard/Marketplace
       window.location.href = "/market"; 
 
     } catch (e) {
@@ -63,18 +58,14 @@ export default function Login() {
   };
 
   return (
-    // SFONDO GENERALE: Beige crema #f2e9d0
     <div className="min-h-screen w-full bg-[#f2e9d0] flex items-center justify-center p-6">
       
-      {/* CARD LOGIN: Bordeaux #4A0404 con ombra profonda */}
       <div className="w-full max-w-lg bg-[#4A0404] text-[#f2e9d0] rounded-3xl shadow-2xl overflow-hidden relative border border-[#5e0a0a]">
         
-        {/* Decorazione: Linea dorata in alto */}
         <div className="h-2 w-full bg-[#D4AF37]"></div>
 
         <div className="p-10 md:p-14 text-center">
           
-          {/* Logo / Icona decorativa */}
           <div className="mx-auto h-16 w-16 bg-[#D4AF37] rounded-full flex items-center justify-center mb-6 shadow-lg text-[#4A0404]">
              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-8 h-8">
                <path strokeLinecap="round" strokeLinejoin="round" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -119,7 +110,7 @@ export default function Login() {
           </button>
 
           <div className="mt-8 text-[10px] text-[#f2e9d0]/30 font-mono">
-            Secure connection required. Please ensure MetaMask is unlocked. [cite: 127, 134]
+            Secure connection required. Please ensure MetaMask is unlocked. 
           </div>
         </div>
       </div>

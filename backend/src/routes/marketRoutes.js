@@ -21,4 +21,7 @@ router.post("/cancel", marketController.cancelListing);
 router.get("/credits", marketController.getCredits);
 router.post("/withdraw", marketController.withdraw);
 
+router.get('/status', marketController.getEmergencyStatus);
+router.post('/emergency', marketController.setEmergencyStop);
+
 export default router;

@@ -12,5 +12,7 @@ router.use("/auth", authRoutes);
 router.use("/market", marketRoutes);
 router.use("/wallet", walletRoutes);
 router.use("/inventory", inventoryRoutes); 
+router.use("/factory", inventoryRoutes);
+
 
 export default router;
