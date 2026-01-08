@@ -83,3 +83,18 @@ export const setFactoryEmergency = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
+
+export const checkReseller = async (req, res) => {
+  try {
+    const { address } = req.query;
+    if (!address) {
+      return res.status(400).json({ error: "Missing address" });
+    }
+
+    const isReseller = await inventoryService.checkResellerStatus(address);
+    res.json({ isReseller });
+  } catch (err) {
+    console.error("Check Reseller Error:", err);
+    res.json({ isReseller: false });
+  }
+};

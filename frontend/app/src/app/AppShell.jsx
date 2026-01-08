@@ -1,7 +1,6 @@
-import React, { useState, useEffect } from "react";
+import React from "react"; 
 import { logout } from "../lib/auth";
 import { useNavigate, useLocation } from "react-router-dom";
-import { apiGet } from "../lib/api"; // Importiamo apiGet per controllare lo stato
 import { 
   UserCircleIcon, 
   ArrowRightOnRectangleIcon, 
@@ -10,14 +9,13 @@ import {
   WalletIcon 
 } from "@heroicons/react/24/outline";
 
-function shortAddr(a) {
-  const s = String(a || "");
-  return s.length > 12 ? `${s.slice(0, 6)}…${s.slice(-4)}` : s;
-}
+// --- CONTEXT & UTILS ---
+import { useSystem } from "../context/SystemContext"; 
+import { useWallet } from "../context/WalletContext"; // Importiamo il Wallet
+import { shortAddr } from "../lib/formatters";        
 
 /**
  * COMPONENTE: SystemAlert
- * Mostra il banner rosso se c'è un'emergenza attiva.
  */
 function SystemAlert({ marketPaused, factoryPaused }) {
   if (!marketPaused && !factoryPaused) return null;
@@ -37,43 +35,27 @@ function SystemAlert({ marketPaused, factoryPaused }) {
   );
 }
 
-export default function AppShell({ title = "WatchDApp", address, balanceLux, children }) {
+// NOTA: Ho rimosso 'address' e 'balanceLux' dalle props qui sotto!
+export default function AppShell({ title = "WatchDApp", children }) {
   const navigate = useNavigate();
   const location = useLocation();
 
-  // --- STATO PER EMERGENCY STOP ---
-  const [marketPaused, setMarketPaused] = useState(false);
-  const [factoryPaused, setFactoryPaused] = useState(false);
+  // 1. Dati Sistema (Globali)
+  const { marketPaused, factoryPaused } = useSystem();
 
-  // --- LOGOUT ---
+  // 2. Dati Wallet (Globali)
+  // Recuperiamo address e balance direttamente dal "cervello" centrale
+  const { address, balance } = useWallet();
+  
+  // Alias: usiamo 'balanceLux' per compatibilità con il tuo codice HTML esistente
+  const balanceLux = balance; 
+
   const handleLogout = async () => {
     await logout();
+    // Non serve aggiornare lo stato qui, il logout ricarica la pagina o pulisce il localStorage
+    // e al riavvio il WalletContext vedrà che non c'è più l'address.
   };
   
-  // --- CHECK STATUS SISTEMA ---
-  useEffect(() => {
-    const checkStatus = async () => {
-      try {
-        // Controlliamo in parallelo lo stato di Market e Factory
-        // Nota: usiamo .catch per evitare che un errore API rompa tutta la UI
-        const [m, f] = await Promise.all([
-          apiGet("/market/status").catch(() => ({ paused: false })),
-          apiGet("/factory/status").catch(() => ({ paused: false }))
-        ]);
-        setMarketPaused(!!m?.paused);
-        setFactoryPaused(!!f?.paused);
-      } catch (e) {
-        console.warn("Status check failed", e);
-      }
-    };
-
-    checkStatus();
-    
-    // Polling: ricontrolla ogni 10 secondi per aggiornare il banner in tempo reale
-    const interval = setInterval(checkStatus, 10000);
-    return () => clearInterval(interval);
-  }, [location.pathname]); // Aggiorna anche al cambio pagina
-
   const isMarket = location.pathname === "/market";
 
   return (
@@ -120,6 +102,7 @@ export default function AppShell({ title = "WatchDApp", address, balanceLux, chi
                       <span>{balanceLux || "0"} LUX</span>
                     </div>
                     <div className="flex items-center gap-1 font-mono text-[#f2e9d0]/70 mt-0.5">
+                      {/* shortAddr ora viene importato da lib/formatters, non più locale */}
                       <span className="bg-black/20 px-1 rounded">{shortAddr(address)}</span>
                     </div>
                  </div>
@@ -161,7 +144,6 @@ export default function AppShell({ title = "WatchDApp", address, balanceLux, chi
         </div>
       </header>
 
-      {/* SYSTEM ALERT: Inserito qui, sotto l'header */}
       <SystemAlert marketPaused={marketPaused} factoryPaused={factoryPaused} />
 
       {/* MAIN */}

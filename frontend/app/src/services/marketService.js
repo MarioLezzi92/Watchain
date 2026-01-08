@@ -1,6 +1,6 @@
 import { apiGet, apiPost } from "../lib/api";
 import { ethers } from "ethers";
-
+import { parseLux } from "../lib/formatters";
 // --- LETTURA ---
 export async function getListings() {
   return await apiGet("/market/listings"); 
@@ -21,10 +21,9 @@ export async function mintWatch() {
 }
 
 export async function listPrimary(tokenId, priceLux) {
-  let priceWei = "0";
-  try { priceWei = ethers.parseEther(String(priceLux)).toString(); } catch {}
+  const priceWei = parseLux(priceLux);
   return await apiPost("/market/listPrimary", { 
-    tokenId: String(tokenId), 
+    tokenId, 
     price: priceWei 
   });
 }
@@ -35,10 +34,9 @@ export async function certify(tokenId) {
 }
 
 export async function listSecondary(tokenId, priceLux) {
-  let priceWei = "0";
-  try { priceWei = ethers.parseEther(String(priceLux)).toString(); } catch {}
+  const priceWei = parseLux(priceLux);
   return await apiPost("/market/listSecondary", { 
-    tokenId: String(tokenId), 
+    tokenId, 
     price: priceWei 
   });
 }
@@ -57,4 +55,8 @@ export async function setReseller(who, enabled = true) {
     who,
     enabled,
   });
+}
+
+export async function getResellerStatus(address) {
+  return await apiGet(`/inventory/is-reseller?address=${address}`);
 }

@@ -3,8 +3,16 @@ import ReactDOM from "react-dom/client";
 import App from "./App.jsx";
 import "./index.css";
 
+// IMPORTIAMO I DUE PROVIDER
+import { SystemProvider } from "./context/SystemContext";
+import { WalletProvider } from "./context/WalletContext"; // <--- NUOVO
+
 ReactDOM.createRoot(document.getElementById("root")).render(
   <React.StrictMode>
-    <App />
+    <SystemProvider>
+      <WalletProvider>
+        <App />
+      </WalletProvider>
+    </SystemProvider>
   </React.StrictMode>
 );

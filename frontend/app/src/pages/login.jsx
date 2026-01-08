@@ -1,21 +1,24 @@
-// src/pages/login.jsx
 import React, { useState } from "react";
+import { useNavigate } from "react-router-dom"; // Navigazione veloce
 import { apiGet, apiPost } from "../lib/api";
+import { useWallet } from "../context/WalletContext"; // Per aggiornare lo stato globale
 
-/**
- * Funzione per connettere MetaMask e recuperare l'indirizzo pubblico[cite: 152, 158].
- */
+import { useSystem } from "../context/SystemContext"; 
+
 async function connectMetamask() {
   if (!window.ethereum) throw new Error("MetaMask non trovato (installa l’estensione).");
-
   const accounts = await window.ethereum.request({ method: "eth_requestAccounts" });
   if (!accounts || accounts.length === 0) throw new Error("Nessun account MetaMask disponibile.");
-
-  const address = accounts[0];
-  return { address };
+  return { address: accounts[0] };
 }
 
 export default function Login() {
+  const navigate = useNavigate();
+  const { refreshWallet } = useWallet();
+  
+  // 2. RECUPERA LA FUNZIONE forceRefresh
+  const { forceRefresh } = useSystem(); 
+
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
 
@@ -23,11 +26,10 @@ export default function Login() {
     setErr("");
     setLoading(true);
     try {
+      // ... (Connessione e Firma rimangono uguali) ...
       const { address } = await connectMetamask();
-
       const resNonce = await apiGet(`/auth/nonce?address=${address}`);
       const nonce = resNonce?.nonce; 
-
       if (!nonce) throw new Error("Nonce non ricevuto dal backend.");
 
       const message = `Login to WatchDApp\nNonce: ${nonce}`;
@@ -36,9 +38,7 @@ export default function Login() {
         params: [message, address],
       });
 
-      // 4) Invio firma al server per ricevere il JWT [cite: 46, 224, 345, 346]
       const resLogin = await apiPost("/auth/login", { address, signature });
-      
       const token = resLogin?.token;
       const role = resLogin?.role;
 
@@ -48,15 +48,21 @@ export default function Login() {
       localStorage.setItem("role", role);
       localStorage.setItem("address", address);
 
-      window.location.href = "/market"; 
+      // 3. AGGIORNAMENTO TOTALE
+      // Aggiorna il Wallet (Soldi/Ruolo)
+      await refreshWallet(); 
+      
+      forceRefresh(); 
+      
+      navigate("/market"); 
 
     } catch (e) {
+      console.error(e);
       setErr(e?.message || String(e));
     } finally {
       setLoading(false);
     }
   };
-
   return (
     <div className="min-h-screen w-full bg-[#f2e9d0] flex items-center justify-center p-6">
       

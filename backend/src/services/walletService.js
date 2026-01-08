@@ -13,3 +13,4 @@ export async function getBalance(role, address) {
     return "0";
   }
 }
+

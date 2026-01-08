@@ -1,10 +1,6 @@
 const CERT_IMG = "/watch-certified.jpg";
 const UNCERT_IMG = "/watch-uncertified.jpg";
-
-function shortAddr(a) {
-  const s = String(a || "");
-  return s.length > 12 ? `${s.slice(0, 6)}…${s.slice(-4)}` : s;
-}
+import { shortAddr } from "../../lib/formatters";
 
 export default function WatchCard({ item, onOpen, variant = "market" }) {
   const tokenId = String(item?.tokenId ?? "");

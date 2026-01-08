@@ -113,10 +113,20 @@ export function certifyNft(role, userAddress, tokenId) {
  */
 export async function checkResellerStatus(address) {
   try {
-    const result = await ffQuery("reseller", "WatchNFT_API", "reseller", { who: address });
+    const role = "producer";
+
+    const input = { 
+      "who": address, 
+      "address": address,
+      "": address 
+    };
+
+    const result = await ffQuery(role, "WatchNFT_API", "reseller", input);
     const out = unwrapFFOutput(result);
     return parseBool(out);
+
   } catch (err) {
+    console.error(`Errore checkResellerStatus [${address}]:`, err.message);
     return false;
   }
 }
