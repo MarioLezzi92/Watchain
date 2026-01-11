@@ -8,7 +8,6 @@ const LUX_API = "LuxuryCoin_API";
 
 /**
  * Helper: Recupera i dettagli completi dell'evento dal riferimento.
- * Endpoint confermato: 'blockchainevents'
  */
 async function getEventDetails(referenceId) {
   if (!referenceId) return null;
@@ -33,7 +32,7 @@ export async function getActiveListings() {
       type: "blockchain_event_received" 
     });
     
-    // 2. Scarica i dettagli completi in parallelo (Velocissimo su DB locale)
+    // 2. Scarica i dettagli completi in parallelo 
     const detailPromises = notifications.map(async (note) => {
         if (!note.reference) return null;
         return await getEventDetails(note.reference);
@@ -98,7 +97,7 @@ export async function getActiveListings() {
 }
 
 // -----------------------------------------------------------
-// TRANSAZIONI (Codice Invariato)
+// TRANSAZIONI 
 // -----------------------------------------------------------
 
 export async function checkNFTApproval(role, ownerAddress) {

@@ -6,15 +6,14 @@ import { config } from "./config/env.js";
 
 // Importiamo le rotte
 import routes from "./routes/index.js";
-// ECCO LA CORREZIONE: ora punta a "eventsRoutes.js" (plurale)
 import eventsRoutes from "./routes/eventsRoutes.js"; 
 
 const app = express();
 
-// 1. Creiamo il server HTTP per i Socket
+// 1. server HTTP per i Socket
 const server = http.createServer(app);
 
-// 2. Configuriamo Socket.io
+// 2. Configurazione Socket.io
 const io = new Server(server, {
   cors: {
     origin: config.frontendOrigin || "http://localhost:5173", 
@@ -23,7 +22,7 @@ const io = new Server(server, {
   }
 });
 
-// Rendiamo 'io' disponibile ovunque
+
 app.set("io", io);
 
 // Middleware

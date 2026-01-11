@@ -98,11 +98,11 @@ export default function MarketPage() {
       console.log("⚡ EVENTO SOCKET RICEVUTO:", data);
       
       if (data.eventType === "Listed") {
-        // Se qualcuno vende, ricarichiamo per avere i dati freschi
+        // Se qualcuno vende, ricarica per avere i dati aggiornati
         refreshListings(true);
       } 
       else if (data.eventType === "Purchased" || data.eventType === "Canceled") {
-        // Se venduto/cancellato, lo togliamo subito dalla lista visiva!
+        // Se venduto/cancellato, lo toglie subito dalla lista visiva
         setListings(prev => prev.filter(item => item.tokenId !== data.tokenId));
       }
     });
@@ -186,7 +186,7 @@ export default function MarketPage() {
   const openDetails = (item) => { setSelected(item); setOpen(true); };
 
   return (
-    <AppShell title="WatchDApp" address={address} balanceLux={balanceLux}>
+    <AppShell title="Watchain" address={address} balanceLux={balanceLux}>
       <div className="space-y-8">
         <div className="flex items-end justify-between border-b border-[#4A0404]/10 pb-4">
            <div>

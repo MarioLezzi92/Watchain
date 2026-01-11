@@ -39,7 +39,6 @@ export default function WatchDetailsModal({ open, onClose, item, role, onList, o
           <XMarkIcon className="h-6 w-6" />
         </button>
 
-        {/* FOTO */}
         <div className="md:w-1/2 bg-[#FDFBF7] flex items-center justify-center p-8 relative">
            <div className="absolute top-6 left-6 z-10">
               {item.certified 
@@ -54,7 +53,6 @@ export default function WatchDetailsModal({ open, onClose, item, role, onList, o
            />
         </div>
 
-        {/* DATI */}
         <div className="md:w-1/2 p-8 flex flex-col justify-between relative">
           <div className="space-y-6">
             <div>
@@ -148,7 +146,6 @@ export default function WatchDetailsModal({ open, onClose, item, role, onList, o
                 disabled={busy}
                 className="w-full py-4 bg-[#D4AF37] hover:bg-[#c49f27] text-[#4A0404] text-lg font-bold rounded-xl shadow-[0_0_20px_rgba(212,175,55,0.3)] transition transform hover:scale-[1.02] active:scale-95 flex items-center justify-center gap-2"
               >
-                {/* Visualizzazione intelligente anche qui */}
                 {busy ? "Processing..." : `Buy Now for ${item.priceLux} LUX`}
               </button>
             )}

@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from "react";
 import AppShell from "../app/AppShell";
 import { useWallet } from "../context/WalletContext";
 import { useSystem } from "../context/SystemContext";
-import { formatError, formatLux } from "../lib/formatters"; // Usa il formattatore pulito
+import { formatError, formatLux } from "../lib/formatters"; 
 import { apiPost } from "../lib/api";
 
 // Components
@@ -36,7 +36,7 @@ import {
 } from "../services/marketService";
 
 export default function MePage() {
-  // 1. DATI GLOBALI (Ora arrivano corretti dal Context ripristinato)
+  // 1. DATI GLOBALI 
   const { address, role, balance, pendingBalance, refreshWallet, loading: walletLoading } = useWallet();
   const { marketPaused, factoryPaused, refreshTrigger, forceRefresh } = useSystem();
   
@@ -56,15 +56,13 @@ export default function MePage() {
     error: null    
   });
 
-  // --- LOGICA INVENTARIO (Simile al vecchio codice) ---
+  // --- LOGICA INVENTARIO  ---
   const refreshInventory = useCallback(async (silent = true) => {
     if (!address) return;
     if (!silent) setLoadingInventory(true);
     
     try {
       const activeListings = await getListings().catch(() => []);
-      // Nota: inventory è già nel context, ma qui facciamo il merge con i prezzi
-      // Per semplicità usiamo l'API diretta qui per avere i dati freschi come facevi tu
       const { apiGet } = await import("../lib/api");
       const myItems = await apiGet("/inventory");
 
@@ -177,16 +175,14 @@ export default function MePage() {
   };
 
   // FORMATTAZIONE CREDITI
-  // pendingBalance arriva in WEI (dal context), lo formattiamo qui per la UI
   const displayCredits = pendingBalance ? String(pendingBalance).split(".")[0] : "0";  // Il bottone è abilitato se pendingBalance non è "0" (controllo sulla stringa grezza)
   const canWithdraw = displayCredits !== "0" && displayCredits !== "";
 
   return (
-    <AppShell title="WatchDApp">
+    <AppShell title="Watchain">
       
       <div className="grid gap-8 lg:grid-cols-12 items-start">
         
-        {/* --- COLONNA SINISTRA --- */}
         <div className="lg:col-span-4 space-y-6">
           <div className="rounded-3xl bg-[#4A0404] text-[#FDFBF7] p-8 shadow-xl sticky top-28 border border-[#5e0a0a]">
             <div className="text-3xl font-serif font-bold tracking-wide mb-6">Il tuo Profilo</div>
@@ -203,7 +199,6 @@ export default function MePage() {
                <div className="bg-black/20 p-4 rounded-xl border border-white/5">
                   <div className="text-red-200/80 text-xs uppercase tracking-wider font-bold mb-1 flex justify-between">
                       <span>Saldo</span>
-                      {/* Bottone Refresh Manuale (come nel vecchio codice) */}
                       <button onClick={refreshWallet} disabled={walletLoading}>
                          <ArrowPathIcon className={`h-4 w-4 text-white/50 hover:text-white ${walletLoading ? 'animate-spin' : ''}`}/>
                       </button>
@@ -211,7 +206,6 @@ export default function MePage() {
                   <div className="text-[#D4AF37] text-2xl font-bold">{balance} LUX</div>
                </div>
 
-               {/* BOX VENDITE DA INCASSARE */}
                {pendingBalance !== "0" && (
                <div className="bg-[#1A472A]/40 p-4 rounded-xl border border-[#D4AF37]/50 animate-pulse mt-4">
                   <div className="text-[#D4AF37] text-xs uppercase tracking-wider font-bold mb-1 flex items-center gap-1">
@@ -250,7 +244,6 @@ export default function MePage() {
           </div>
         </div>
 
-        {/* --- COLONNA DESTRA (INVENTARIO) --- */}
         <div className="lg:col-span-8 space-y-6">
           <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 border-b border-[#4A0404]/10 pb-4">
             <div>

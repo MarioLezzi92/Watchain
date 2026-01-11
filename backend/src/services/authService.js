@@ -35,7 +35,7 @@ export const verifyLogin = (address, signature) => {
     throw new Error("Nonce expired");
   }
 
-  const message = `Login to WatchDApp\nNonce: ${entry.nonce}`;
+  const message = `Login to Watchain\nNonce: ${entry.nonce}`;
   
   // Verifica della firma crittografica
   const recovered = ethers.verifyMessage(message, signature);
@@ -48,7 +48,7 @@ export const verifyLogin = (address, signature) => {
 
   const role = determineRole(addrNormal);
 
-  // Payload conforme a slide pag. 19: usa 'account'
+  // Payload 
   const token = signJwt({ 
     account: addrNormal, 
     role: role 

@@ -11,11 +11,11 @@ export function formatLux(weiValue) {
     const sVal = String(weiValue);
     if (sVal === "0") return "0";
 
-    // ethers.formatEther ci dà la stringa decimale (es. "5.0" o "0.00001")
+    // ethers.formatEther dà la stringa decimale (es. "5.0" o "0.00001")
     const formatted = ethers.formatEther(sVal);
 
     // LOGICA STRICT INTEGER:
-    // Splittiamo sul punto decimale e prendiamo solo la prima parte (l'intero).
+    // Split sul punto decimale e prende solo la prima parte (l'intero).
     // Qualsiasi cosa dopo la virgola viene ignorata.
     const [int] = formatted.split(".");
     
@@ -28,12 +28,10 @@ export function formatLux(weiValue) {
 /**
  * Converte LUX in Wei (per inviare alla Blockchain)
  * Es: "5" -> "5000000000000000000"
- * FONDAMENTALE PER IL LISTING!
  */
 export function parseLux(luxValue) {
   try {
     if (!luxValue) return "0";
-    // ethers.parseEther restituisce un BigInt, noi vogliamo una Stringa per l'API
     return ethers.parseEther(String(luxValue)).toString();
   } catch (e) {
     console.error("Parse Error:", e);

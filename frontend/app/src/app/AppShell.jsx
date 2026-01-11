@@ -14,6 +14,8 @@ import { useSystem } from "../context/SystemContext";
 import { useWallet } from "../context/WalletContext"; // Importiamo il Wallet
 import { shortAddr } from "../lib/formatters";        
 
+
+
 /**
  * COMPONENTE: SystemAlert
  */
@@ -35,8 +37,7 @@ function SystemAlert({ marketPaused, factoryPaused }) {
   );
 }
 
-// NOTA: Ho rimosso 'address' e 'balanceLux' dalle props qui sotto!
-export default function AppShell({ title = "WatchDApp", children }) {
+export default function AppShell({ title = "Watchain", children }) {
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -44,16 +45,12 @@ export default function AppShell({ title = "WatchDApp", children }) {
   const { marketPaused, factoryPaused } = useSystem();
 
   // 2. Dati Wallet (Globali)
-  // Recuperiamo address e balance direttamente dal "cervello" centrale
   const { address, balance } = useWallet();
   
-  // Alias: usiamo 'balanceLux' per compatibilità con il tuo codice HTML esistente
   const balanceLux = balance; 
 
   const handleLogout = async () => {
     await logout();
-    // Non serve aggiornare lo stato qui, il logout ricarica la pagina o pulisce il localStorage
-    // e al riavvio il WalletContext vedrà che non c'è più l'address.
   };
   
   const isMarket = location.pathname === "/market";
@@ -61,11 +58,9 @@ export default function AppShell({ title = "WatchDApp", children }) {
   return (
     <div className="min-h-screen w-full bg-[#f2e9d0] text-zinc-900 font-sans flex flex-col">
       
-      {/* HEADER (Sticky) */}
       <header className="sticky top-0 z-40 w-full shadow-lg bg-[#4A0404] text-[#f2e9d0] border-b border-[#D4AF37]/30">
         <div className="w-full max-w-7xl mx-auto px-6 h-20 flex items-center justify-between relative">
           
-          {/* SINISTRA */}
           <div className="flex-1 flex justify-start">
             {!isMarket && (
               <button
@@ -79,18 +74,23 @@ export default function AppShell({ title = "WatchDApp", children }) {
             )}
           </div>
 
-          {/* CENTRO */}
-          <div className="absolute left-1/2 transform -translate-x-1/2">
-            <button
-              onClick={() => navigate("/market")} 
-              className="font-serif font-extrabold text-3xl tracking-widest text-[#f2e9d0] hover:text-[#D4AF37] transition-colors duration-300"
-              title="Torna alla Home"
+          <div className="absolute left-1/2 transform -translate-x-1/2 flex items-center gap-3">
+            <button 
+              onClick={() => navigate("/market")}
+              className="flex items-center gap-3 hover:opacity-80 transition-opacity"
             >
-              {title}
+              <img 
+                src="/logo.svg" 
+                alt="Logo" 
+                className="h-10 w-auto object-contain drop-shadow-md" 
+              />
+              
+              <span className="font-serif font-extrabold text-2xl tracking-widest text-[#f2e9d0] hidden sm:block">
+                {title}
+              </span>
             </button>
           </div>
 
-          {/* DESTRA */}
           <div className="flex-1 flex justify-end items-center gap-3 md:gap-5">
              
              {address ? (
@@ -102,7 +102,6 @@ export default function AppShell({ title = "WatchDApp", children }) {
                       <span>{balanceLux || "0"} LUX</span>
                     </div>
                     <div className="flex items-center gap-1 font-mono text-[#f2e9d0]/70 mt-0.5">
-                      {/* shortAddr ora viene importato da lib/formatters, non più locale */}
                       <span className="bg-black/20 px-1 rounded">{shortAddr(address)}</span>
                     </div>
                  </div>
@@ -143,15 +142,15 @@ export default function AppShell({ title = "WatchDApp", children }) {
           </div>
         </div>
       </header>
+      {/* --- FINE HEADER --- */}
 
       <SystemAlert marketPaused={marketPaused} factoryPaused={factoryPaused} />
 
-      {/* MAIN */}
       <main className="w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-10 py-12 flex-grow">
         {children}
       </main>
 
-      {/* FOOTER */}
+   
       <footer className="bg-[#4A0404] text-[#f2e9d0] border-t border-[#D4AF37]/30 mt-auto">
         <div className="w-full max-w-7xl mx-auto px-6 sm:px-8 lg:px-12 py-12">
           <div className="grid grid-cols-1 md:grid-cols-4 gap-8 mb-8">

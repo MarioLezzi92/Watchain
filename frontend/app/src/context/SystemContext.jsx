@@ -2,7 +2,13 @@ import React, { createContext, useContext, useState, useEffect } from "react";
 import { io } from "socket.io-client";
 import { apiGet } from "../lib/api";
 
-// Creiamo il contesto
+/**
+ * * Gestisce :
+ * 1. STATO GLOBALE: Se il mercato o la fabbrica sono in "Pausa Emergenza".
+ * 2. REAL-TIME: La connessione Socket.io che ascolta la Blockchain.
+ */
+
+// Crea il contesto
 const SystemContext = createContext();
 
 export function SystemProvider({ children }) {
@@ -12,7 +18,6 @@ export function SystemProvider({ children }) {
   const [factoryPaused, setFactoryPaused] = useState(false);
   
   // Questo contatore serve a notificare le pagine che c'è stato un aggiornamento
-  // (es. un oggetto è stato venduto), così loro possono ricaricare le liste.
   const [refreshTrigger, setRefreshTrigger] = useState(0);
 
   // --- 1. CONTROLLO INIZIALE STATO (API) ---
@@ -31,11 +36,10 @@ export function SystemProvider({ children }) {
 
   // --- 2. GESTIONE SOCKET (UNICA) ---
   useEffect(() => {
-    // Carichiamo lo stato appena si apre il sito
+    // Carica lo stato appena si apre il sito
     checkStatus();
 
-    // Connettiamo il Socket una volta sola
-    // Nota: Adegua l'URL se il tuo backend non è su localhost:3001
+    // Connette il Socket una volta sola
     const s = io("http://localhost:3001"); 
     setSocket(s);
 
@@ -43,15 +47,14 @@ export function SystemProvider({ children }) {
       console.log("🟢 Socket Global Connected:", s.id);
     });
 
-    // Ascoltiamo QUALSIASI aggiornamento dal mercato
+    // Ascolta QUALSIASI aggiornamento dal mercato
     s.on("market-update", (data) => {
       console.log("⚡ Global Update Received:", data);
       
-      // 1. Incrementiamo il trigger -> Le pagine (Market/Me) ricaricheranno i dati
+      // 1. Incrementa il trigger -> Le pagine (Market/Me) ricaricheranno i dati
       setRefreshTrigger(prev => prev + 1);
 
-      // 2. Se l'evento suggerisce un cambio di stato (es. "SystemPaused"), ricarichiamo lo stato
-      // (Aggiungi questo controllo se il tuo backend emette eventi specifici per la pausa)
+      // 2. Se l'evento suggerisce un cambio di stato (es. "SystemPaused"), ricarica lo stato
       if (data.eventType === "EmergencyStateChanged") {
         checkStatus();
       }

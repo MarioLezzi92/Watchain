@@ -10,7 +10,7 @@ export const getApprovalStatus = async (req, res) => {
   }
 };
 
-// Modifica la funzione requestApproval
+
 export const requestApproval = async (req, res) => {
   try {
     const { role, sub: address } = req.user;
@@ -32,6 +32,7 @@ export const requestApproval = async (req, res) => {
   }
 };
 
+
 export const getListings = async (req, res) => {
   try {
     const listings = await marketService.getActiveListings();
@@ -40,6 +41,7 @@ export const getListings = async (req, res) => {
     res.status(500).json({ error: "Errore caricamento mercato" });
   }
 };
+
 
 export const buy = async (req, res) => {
   try {
@@ -54,6 +56,8 @@ export const buy = async (req, res) => {
   }
 };
 
+
+
 export const listPrimary = async (req, res) => {
   try {
     const { tokenId, price } = req.body;
@@ -63,6 +67,8 @@ export const listPrimary = async (req, res) => {
     res.status(400).json({ error: err.message });
   }
 };
+
+
 
 export const listSecondary = async (req, res) => {
   const reqId = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -112,6 +118,7 @@ export const getCredits = async (req, res) => {
   }
 };
 
+
 export const withdraw = async (req, res) => {
   try {
     const out = await marketService.withdrawCredits(req.user.role, req.user.sub);
@@ -121,6 +128,7 @@ export const withdraw = async (req, res) => {
   }
 };
 
+
 export const getEmergencyStatus = async (req, res) => {
   try {
     const result = await marketService.getMarketStatus();
@@ -129,6 +137,7 @@ export const getEmergencyStatus = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
+
 
 export const setEmergencyStop = async (req, res) => {
   try {

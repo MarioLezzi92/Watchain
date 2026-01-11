@@ -1,4 +1,3 @@
-// src/utils/formatters.js
 
 /**
  * Estrae il dato utile dalle risposte di FireFly (FF).
@@ -48,7 +47,7 @@ export function luxToWeiString(amountLux) {
 }
 
 /**
- * CONVERSIONE DA WEI A LUX (Per visualizzazione nel frontend)
+ * CONVERSIONE DA WEI A LUX 
  * Toglie esattamente 18 cifre dalla stringa ricevuta dalla blockchain.
  * Se il valore è inferiore a 10^18, restituisce "0".
  */

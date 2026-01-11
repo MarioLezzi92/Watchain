@@ -1,6 +1,5 @@
 import * as inventoryService from "../services/inventoryService.js";
 
-// GET /inventory
 export const getMyInventory = async (req, res) => {
   try {
     const { role, sub: address } = req.user;
@@ -12,7 +11,6 @@ export const getMyInventory = async (req, res) => {
   }
 };
 
-// POST /inventory/mint (Ex /nft/mint)
 export const mint = async (req, res) => {
   try {
     const { role } = req.user;
@@ -44,6 +42,7 @@ export const certify = async (req, res) => {
   }
 };
 
+
 export const setReseller = async (req, res) => {
   try {
     const { role } = req.user;
@@ -73,6 +72,7 @@ export const getFactoryStatus = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
+
 
 export const setFactoryEmergency = async (req, res) => {
   try {

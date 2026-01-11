@@ -1,20 +1,20 @@
-// src/controllers/eventsController.js
 import { unwrapFFOutput } from "../utils/formatters.js";
 
+/**
+ * GESTORE WEBHOOK (Blockchain -> Backend -> Frontend)
+ * * Quando FireFly rileva un evento sulla blockchain (es. "Sold", "Certified"),
+ * chiama questo endpoint. Viene passato al frontend via WebSocket.
+ */
 export const handleFireFlyWebhook = (req, res) => {
   try {
-    // 1. FireFly si aspetta una risposta VELOCE (entro pochi secondi)
-    // Rispondiamo subito "200 OK" per dirgli "Messaggio ricevuto, grazie!"
-    // Se non lo facciamo, FireFly penserà che siamo morti e riproverà all'infinito.
+    // 1. ACK IMMEDIATO a FireFly per evitare che riprovi all'infinito.
     res.status(200).json({ ack: true });
 
     const body = req.body;
     
-    // Logghiamo per debug (così vedi nel terminale cosa arriva)
     console.log("📨 Webhook ricevuto da FireFly!");
 
-    // 2. Estraiamo i dati utili
-    // FireFly mette i dati dell'evento dentro "blockchainEvent"
+    
     const blockchainEvent = body.blockchainEvent || {};
     const eventName = blockchainEvent.name; // Es: "Listed", "Purchased", "Canceled"
     const output = blockchainEvent.output || {};
@@ -24,28 +24,24 @@ export const handleFireFlyWebhook = (req, res) => {
       return;
     }
 
-    // 3. Puliamo i dati (togliamo i wrapper di FireFly)
-    // Nota: I nomi dei campi (seller, price, tokenId) dipendono dal tuo Smart Contract!
+    // 2. PULIZIA DATI: Togle i wrapper tecnici di FireFly per avere un JSON pulito.
     const cleanData = {
       tokenId: unwrapFFOutput(output.tokenId),
       price: output.price ? unwrapFFOutput(output.price) : null,
       seller: output.seller ? unwrapFFOutput(output.seller) : null,
       buyer: output.buyer ? unwrapFFOutput(output.buyer) : null,
-      eventType: eventName // Passiamo il tipo così il frontend sa che fare
+      eventType: eventName // Passa il tipo così il frontend sa che fare
     };
 
     console.log(`🔔 Evento processato: ${eventName} -> Token #${cleanData.tokenId}`);
 
-    // 4. SPARA AL FRONTEND VIA SOCKET! 🚀
-    // Recuperiamo l'istanza 'io' che abbiamo salvato in app.js
+    // 3. BROADCAST: Invia il messaggio a TUTTI i client connessi al sito.
     const io = req.app.get("io");
     
-    // Emettiamo un messaggio globale su un canale unico
+    // Emette un messaggio globale su un canale unico
     io.emit("market-update", cleanData);
 
   } catch (err) {
     console.error("❌ Errore critico nel Webhook:", err);
-    // Nota: Anche se c'è errore, abbiamo già risposto 200 a FireFly.
-    // Questo è voluto: non vogliamo bloccare la coda di FireFly per un nostro bug.
   }
 };

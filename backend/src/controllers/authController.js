@@ -31,8 +31,6 @@ export const login = (req, res) => {
 };
 
 export const logout = (req, res) => {
-  // In un sistema JWT semplice, il logout è la distruzione del token lato client.
-  // Restituiamo un messaggio di successo per confermare l'azione.
   res.json({ 
     success: true, 
     message: "Logout effettuato. Eliminare il token dal client." 

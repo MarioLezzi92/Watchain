@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg"
+     width="512" height="512"
+     viewBox="0 0 512 512"
+     fill="none">
+
+  <defs>
+    <style>
+      .goldFill { fill:#C9A24D; }
+      .goldStroke { stroke:#C9A24D; fill:none; }
+    </style>
+  </defs>
+
+  <!-- DYNAMIC RING -->
+  <path d="
+    M300 64
+    A200 200 0 1 1 120 360"
+    class="goldStroke"
+    stroke-width="36"
+    stroke-linecap="round"/>
+
+  <!-- BLOCKCHAIN HOUR MARKERS (HEX BLOCKS) -->
+  <g class="goldFill" transform="rotate(-8 256 256)">
+    <!-- 12 -->
+    <polygon points="256,62 270,70 270,86 256,94 242,86 242,70"/>
+    <!-- 3 -->
+    <polygon points="450,256 442,270 426,270 418,256 426,242 442,242"/>
+    <!-- 6 -->
+    <polygon points="256,450 270,442 270,426 256,418 242,426 242,442"/>
+    <!-- 9 -->
+    <polygon points="62,256 70,270 86,270 94,256 86,242 70,242"/>
+  </g>
+
+  <!-- HANDS -->
+  <g class="goldStroke" stroke-linecap="round">
+    <!-- hour -->
+    <line x1="256" y1="256" x2="218" y2="222" stroke-width="24"/>
+    <!-- minute -->
+    <line x1="256" y1="256" x2="338" y2="140" stroke-width="18"/>
+  </g>
+
+  <!-- CENTER: HEX CORE (block genesis) -->
+  <polygon class="goldFill"
+    points="256,236 274,246 274,266 256,276 238,266 238,246"/>
+</svg>

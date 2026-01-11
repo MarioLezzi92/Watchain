@@ -4,6 +4,12 @@ import { getBalance } from "../services/walletService";
 import { getCredits } from "../services/marketService";
 import { apiGet } from "../lib/api";
 
+/**
+ * Centralizza tutti i dati personali dell'utente connesso:
+ * - Chi è (Address, Ruolo)
+ * - Cosa possiede (Inventario Orologi)
+ * - Quanto ha (Saldo LUX e Crediti in attesa)
+ */
 const WalletContext = createContext();
 
 export function WalletProvider({ children }) {
@@ -29,18 +35,16 @@ export function WalletProvider({ children }) {
         // Usa la funzione getBalance del service che restituisce { lux: ... }
         try {
             const b = await getBalance();
-            // Il tuo vecchio codice faceva: String(b?.lux ?? "-")
             setBalance(String(b?.lux ?? "0"));
         } catch (e) {
             console.warn("Errore Saldo:", e);
             setBalance("0");
         }
 
-        // 2. RECUPERO CREDITI (Logica originale)
+        // 2. RECUPERO CREDITI 
         // Usa getCredits del marketService che restituisce { creditsWei: ... }
         try {
             const c = await getCredits();
-            // Il tuo vecchio codice usava: c?.creditsWei
             setPendingBalance(String(c?.creditsWei || "0"));
         } catch (e) {
             console.warn("Errore Crediti:", e);

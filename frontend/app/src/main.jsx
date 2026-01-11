@@ -3,9 +3,9 @@ import ReactDOM from "react-dom/client";
 import App from "./App.jsx";
 import "./index.css";
 
-// IMPORTIAMO I DUE PROVIDER
+// IMPORTA I DUE PROVIDER
 import { SystemProvider } from "./context/SystemContext";
-import { WalletProvider } from "./context/WalletContext"; // <--- NUOVO
+import { WalletProvider } from "./context/WalletContext";
 
 ReactDOM.createRoot(document.getElementById("root")).render(
   <React.StrictMode>

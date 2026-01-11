@@ -6,7 +6,7 @@ export async function getListings() {
   return await apiGet("/market/listings"); 
 }
 
-// --- NUOVO: PULL PAYMENTS (Crediti e Prelievi) ---
+// --- PULL PAYMENTS (Crediti e Prelievi) ---
 export async function getCredits() {
   return await apiGet("/market/credits");
 }

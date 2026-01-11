@@ -46,8 +46,6 @@ export default function WatchCard({ item, onOpen, variant = "market" }) {
             {isListed && seller ? <>Seller: {shortAddr(seller)}</> : owner ? <>Owner: {shortAddr(owner)}</> : null}
           </div>
         </div>
-
-        {/* 3. MODIFICA QUI (Prezzo principale) */}
         <div className="mt-4 flex items-center justify-end h-6">
            {isListed ? (
              <span className="text-[#D4AF37] font-bold text-xl">

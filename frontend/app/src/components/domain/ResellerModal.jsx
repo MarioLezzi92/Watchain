@@ -48,7 +48,6 @@ export default function ResellerModal({ isOpen, onClose, onDone }) {
       setCurrentStatus(null);
       try {
         const res = await getResellerStatus(who);
-        // Se riceviamo una risposta valida, la usiamo
         if (res && typeof res.isReseller === 'boolean') {
             setCurrentStatus(res.isReseller);
         } else {
@@ -56,7 +55,6 @@ export default function ResellerModal({ isOpen, onClose, onDone }) {
         }
       } catch (e) {
         console.warn("Verifica stato fallita (Backend non aggiornato?):", e);
-        // FIX: Se fallisce, non diciamo "Inattivo", ma "Sconosciuto"
         setCurrentStatus("unknown");
       } finally {
         setChecking(false);
@@ -72,8 +70,6 @@ export default function ResellerModal({ isOpen, onClose, onDone }) {
     setMsg("");
     if (!who) return;
 
-    // Se passiamo uno stato forzato (dai bottoni manuali), usiamo quello.
-    // Altrimenti invertiamo lo stato corrente (toggle smart).
     const newState = forcedState !== null ? forcedState : !currentStatus;
 
     try {
@@ -112,7 +108,6 @@ export default function ResellerModal({ isOpen, onClose, onDone }) {
 
         <div className="w-full space-y-6">
             
-            {/* SELEZIONE */}
             <div className="relative">
                 <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                   <UserIcon className="h-5 w-5 text-[#D4AF37]" />
@@ -131,11 +126,9 @@ export default function ResellerModal({ isOpen, onClose, onDone }) {
                 </select>
             </div>
 
-            {/* ZONA AZIONI */}
             {who && (
               <div className="animate-in slide-in-from-bottom-2 fade-in duration-300">
                 
-                {/* ICONA STATO */}
                 <div className="flex flex-col items-center justify-center py-4">
                   {checking ? (
                     <div className="w-8 h-8 border-2 border-[#D4AF37] border-t-transparent rounded-full animate-spin mb-2"></div>
@@ -155,8 +148,6 @@ export default function ResellerModal({ isOpen, onClose, onDone }) {
                   </div>
                 </div>
 
-                {/* BOTTONI */}
-                {/* Caso 1: Stato Verificato -> SMART TOGGLE */}
                 {!checking && !isUnknown && (
                     <button
                         onClick={(e) => handleAction(e)}
@@ -171,7 +162,6 @@ export default function ResellerModal({ isOpen, onClose, onDone }) {
                     </button>
                 )}
 
-                {/* Caso 2: Stato Sconosciuto (Fallback) -> DOPPIO BOTTONE MANUALE */}
                 {(!checking && isUnknown) && (
                     <div className="flex gap-4">
                         <button

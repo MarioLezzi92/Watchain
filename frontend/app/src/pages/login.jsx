@@ -26,13 +26,13 @@ export default function Login() {
     setErr("");
     setLoading(true);
     try {
-      // ... (Connessione e Firma rimangono uguali) ...
+      // ... (Connessione e Firma) ...
       const { address } = await connectMetamask();
       const resNonce = await apiGet(`/auth/nonce?address=${address}`);
       const nonce = resNonce?.nonce; 
       if (!nonce) throw new Error("Nonce non ricevuto dal backend.");
 
-      const message = `Login to WatchDApp\nNonce: ${nonce}`;
+      const message = `Login to Watchain\nNonce: ${nonce}`;
       const signature = await window.ethereum.request({
         method: "personal_sign",
         params: [message, address],
@@ -79,7 +79,7 @@ export default function Login() {
              </svg>
           </div>
 
-          <h1 className="text-5xl font-serif font-bold tracking-tight mb-2 text-white">WatchDApp</h1>
+          <h1 className="text-5xl font-serif font-bold tracking-tight mb-2 text-white">Watchain</h1>
           <p className="text-[#f2e9d0]/60 text-xs tracking-[0.2em] uppercase font-bold mb-8">
             The Luxury Blockchain Market
           </p>

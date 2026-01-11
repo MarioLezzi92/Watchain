@@ -17,7 +17,6 @@ function prettyErr(data) {
   if (!data) return "";
   if (typeof data === "string") return data;
   if (typeof data === "object") {
-    // Cerca il campo 'error' come nelle risposte del tuo backend [cite: 266, 308]
     if (data.error) return typeof data.error === "string" ? data.error : JSON.stringify(data.error);
     if (data.message) return String(data.message);
   }
@@ -33,7 +32,6 @@ async function parseResponse(res) {
   if (!res.ok || (data && data.success === false)) {
     const msg = prettyErr(data) || `HTTP ${res.status}`;
     
-    // Se il token è scaduto (401), potresti voler forzare il logout 
     if (res.status === 401) {
        console.warn("Sessione scaduta o non valida.");
     }

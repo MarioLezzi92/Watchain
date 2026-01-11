@@ -11,19 +11,20 @@ import "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import "./security/EmergencyStop.sol";
 import "./security/PullPayments.sol";
 
-// Interfaccia minima per interagire con WatchNFT
+// Interfaccia minima per leggere direttamente dal contratto NFT
 interface IWatchNFT is IERC721 {
     function certified(uint256 tokenId) external view returns (bool);
     function reseller(address who) external view returns (bool);
     function factory() external view returns (address);
 }
 
-/// @title WatchMarket
-/// @notice Marketplace sicuro con pattern Checks-Effects-Interactions
+// Marketplace sicuro: gestisce la compravendita di orologi
+// Eredita PullPayments  
 contract WatchMarket is Ownable, ReentrancyGuard, EmergencyStop, PullPayments {
     using SafeERC20 for IERC20;
     using Address for address payable;
 
+    // prima vendita e rivendita
     enum SaleType {
         PRIMARY,    // Producer -> Reseller
         SECONDARY   // Reseller -> Consumer
@@ -37,13 +38,17 @@ contract WatchMarket is Ownable, ReentrancyGuard, EmergencyStop, PullPayments {
 
     IWatchNFT public immutable watch;
 
+    // ID orologio -> dettagli vendita
     mapping(uint256 => Listing) public listings;
 
+    // EVENTI
     event Listed(uint256 indexed tokenId, address indexed seller, uint256 price, SaleType saleType);
     event Canceled(uint256 indexed tokenId, address indexed seller);
     event Purchased(uint256 indexed tokenId, address indexed buyer, address indexed seller, uint256 price, SaleType saleType);
     event CreditsWithdrawn(address indexed payee, uint256 amount);
 
+
+    // collega il market al token di pagamento e alla collezione NFT
     constructor(IERC20 paymentToken_, address watchNftAddress_) 
         Ownable(msg.sender) 
         PullPayments(paymentToken_) 
@@ -52,12 +57,9 @@ contract WatchMarket is Ownable, ReentrancyGuard, EmergencyStop, PullPayments {
         watch = IWatchNFT(watchNftAddress_);
     }
 
-    // ------------------------
-    // Emergency Control (NUOVO)
-    // ------------------------
+    // --- Gestione Emergenza ---
 
-    /// @notice Abilita o disabilita il blocco di emergenza del Mercato
-    /// @dev Emette automaticamente gli eventi Paused(account) o Unpaused(account) definiti in EmergencyStop
+    // Abilita/disabilita il mercato in caso di bug/attacchi
     function setEmergencyStop(bool status) external onlyOwner {
         if (status) {
             _pause(); // Blocca: listPrimary, listSecondary, buy, cancelListing, withdraw
@@ -66,14 +68,13 @@ contract WatchMarket is Ownable, ReentrancyGuard, EmergencyStop, PullPayments {
         }
     }
 
-    // ------------------------
-    // Listing Functions
-    // ------------------------
+    // --- Listing Functions ---
 
+    // Mercato primario: solo il Producer (factory) può listare 
     function listPrimary(uint256 tokenId, uint256 price) external nonReentrant whenNotPaused {
         require(price > 0, "Price must be > 0");
         require(watch.ownerOf(tokenId) == msg.sender, "Not owner");
-        require(msg.sender == watch.factory(), "Only Producer can list Primary");
+        require(msg.sender == watch.factory(), "Solo il Producer può listare");
 
         listings[tokenId] = Listing({
             seller: msg.sender,
@@ -84,11 +85,12 @@ contract WatchMarket is Ownable, ReentrancyGuard, EmergencyStop, PullPayments {
         emit Listed(tokenId, msg.sender, price, SaleType.PRIMARY);
     }
 
+    // Mercato secondario: solo i Reseller possono listare 
     function listSecondary(uint256 tokenId, uint256 price) external nonReentrant whenNotPaused {
         require(price > 0, "Price must be > 0");
         require(watch.ownerOf(tokenId) == msg.sender, "Not owner");
         // Verifica che sia un Reseller autorizzato
-        require(watch.reseller(msg.sender), "Only Reseller can list Secondary");
+        require(watch.reseller(msg.sender), "Solo i Reseller autorizzati possono listare");
 
         listings[tokenId] = Listing({
             seller: msg.sender,
@@ -99,6 +101,7 @@ contract WatchMarket is Ownable, ReentrancyGuard, EmergencyStop, PullPayments {
         emit Listed(tokenId, msg.sender, price, SaleType.SECONDARY);
     }
 
+    // Rimuove un orologio dal mercato
     function cancelListing(uint256 tokenId) external nonReentrant whenNotPaused {
         Listing memory l = listings[tokenId];
         require(l.seller == msg.sender, "Not seller");
@@ -107,33 +110,36 @@ contract WatchMarket is Ownable, ReentrancyGuard, EmergencyStop, PullPayments {
         emit Canceled(tokenId, msg.sender);
     }
 
-    // ------------------------
-    // Buy Function (SECURE)
-    // ------------------------
+    // --- Funzioni di Acquisto ---
 
     function buy(uint256 tokenId) external nonReentrant whenNotPaused {
         Listing memory l = listings[tokenId];
         
-        // 1. CHECKS
-        require(l.seller != address(0), "Item not listed");
-        require(l.price > 0, "Price not set");
-        require(msg.sender != l.seller, "Seller cannot buy own item");
+        // 1. Controlli
+        require(l.seller != address(0), "Item non listato");
+        require(l.price > 0, "Prezzo non definito");
+        require(msg.sender != l.seller, "Il venditore non può comprare i suoi item");
 
-        // 2. EFFECTS
-        delete listings[tokenId];
-        _accrueCredit(l.seller, l.price);
+        // 2. Aggiornamento stato
+        delete listings[tokenId]; // rimuove listings per evitare acquisti doppi
+        
+        // Accumula credio per il venditore, non invia subito soldi -> PullPayment
+        _accrueCredit(l.seller, l.price); 
 
-        // 3. INTERACTIONS
+        // 3. Interazioni esterne
+        // Preleva i soldi dal compratore verso il contratto market
         paymentToken.safeTransferFrom(msg.sender, address(this), l.price);
+        
+        //Sposta NFT dal venditore al compratore
         watch.safeTransferFrom(l.seller, msg.sender, tokenId);
 
         emit Purchased(tokenId, msg.sender, l.seller, l.price, l.saleType);
     }
 
-    // ------------------------
-    // Withdrawal (PullPayments)
-    // ------------------------
 
+    // --- Withdrawal (PullPayments) ---
+
+    // permette ai venditori di prelevare LUX guadagnati dalle vendite
     function withdraw() external nonReentrant whenNotPaused returns (uint256 amount) {
         amount = _withdrawCredit(msg.sender);
         emit CreditsWithdrawn(msg.sender, amount);
@@ -141,19 +147,5 @@ contract WatchMarket is Ownable, ReentrancyGuard, EmergencyStop, PullPayments {
 
     function getListing(uint256 tokenId) external view returns (Listing memory) {
         return listings[tokenId];
-    }
-
-    // ------------------------
-    // Emergency Recover
-    // ------------------------
-    
-    function recoverETH(address payable to, uint256 amount) external onlyOwner whenPaused {
-        require(to != address(0), "Invalid address");
-        to.sendValue(amount);
-    }
-
-    function recoverERC20(address token, address to, uint256 amount) external onlyOwner whenPaused {
-        require(token != address(paymentToken), "Cannot recover payment token");
-        IERC20(token).safeTransfer(to, amount);
     }
 }

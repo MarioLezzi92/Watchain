@@ -1,7 +1,5 @@
-// src/lib/auth.js
 
-// Nota: La logica di login con MetaMask ora è interamente in login.jsx
-// Qui gestiamo solo il LocalStorage
+// gestione del local storage per l'autenticazione
 
 export function getToken() {
   return localStorage.getItem("token");
@@ -23,7 +21,7 @@ export async function logout() {
   try {
     const token = getToken();
     if (token) {
-      // Avvisa il backend (rotta simbolica) come previsto dal flusso delle slide
+      // Avvisa il backend 
       await fetch("http://localhost:3001/api/auth/logout", {
         method: "POST",
         headers: {
