@@ -7,7 +7,9 @@ import WatchDetailsModal from "../components/domain/WatchDetailsModal";
 import ConfirmModal from "../components/ui/ConfirmModal"; 
 import SuccessModal from "../components/ui/SuccessModal"; 
 import ErrorModal from "../components/ui/ErrorModal";
-import { io } from "socket.io-client"; 
+import { ArrowPathIcon } from "@heroicons/react/24/outline";
+import { useSystem } from "../context/SystemContext";
+
 
 export default function MarketPage() {
   const role = String(localStorage.getItem("role") || "").toLowerCase();
@@ -24,6 +26,7 @@ export default function MarketPage() {
   const [confirmModal, setConfirmModal] = useState({ isOpen: false, title: "", message: "", onConfirm: null });
   const [successModal, setSuccessModal] = useState({ isOpen: false, message: "" });
   const [errorModal, setErrorModal] = useState({ isOpen: false, message: "" });
+
 
   const marketTitle = (role === '' || role === 'consumer') ? "SECONDARY" : "PRIMARY";
 
@@ -85,33 +88,21 @@ export default function MarketPage() {
   };
 
   // --- LOGICA REAL-TIME ---
+  const { refreshTrigger } = useSystem();
+
+  // 1) Caricamento iniziale (una sola volta)
   useEffect(() => {
-    // 1. Caricamento Iniziale
     refreshBalance();
     refreshListings(true);
-
-    // 2. Connessione Socket
-    const socket = io("http://localhost:3001");
-
-    // 3. Ascolto Eventi
-    socket.on("market-update", (data) => {
-      console.log("⚡ EVENTO SOCKET RICEVUTO:", data);
-      
-      if (data.eventType === "Listed") {
-        // Se qualcuno vende, ricarica per avere i dati aggiornati
-        refreshListings(true);
-      } 
-      else if (data.eventType === "Purchased" || data.eventType === "Canceled") {
-        // Se venduto/cancellato, lo toglie subito dalla lista visiva
-        setListings(prev => prev.filter(item => item.tokenId !== data.tokenId));
-      }
-    });
-
-    // 4. Pulizia alla chiusura
-    return () => {
-      socket.disconnect();
-    };
   }, []);
+
+  // 2) Aggiornamento realtime: quando SystemContext riceve market-update
+  useEffect(() => {
+    if (refreshTrigger > 0) {
+      refreshListings(true);
+      refreshBalance();
+    }
+  }, [refreshTrigger]);
 
   const handleManualRefresh = () => { refreshListings(false); };
 
@@ -195,8 +186,10 @@ export default function MarketPage() {
                {role === 'reseller' ? "Acquista dal Producer." : "Esplora gli orologi in vendita."}
              </p>
            </div>
-           <button onClick={handleManualRefresh} disabled={loading} className="px-4 py-2 bg-white border rounded shadow hover:bg-gray-50 text-sm font-bold text-[#4A0404]">
-             {loading ? "Refreshing..." : "Refresh Market"}
+            <button onClick={handleManualRefresh} disabled={loading}
+              title="Aggiorna Mercato" 
+              className="p-2.5 bg-[#4A0404] border border-[#D4AF37]/30 rounded-xl text-[#D4AF37] hover:bg-[#5e0a0a] hover:border-[#D4AF37] transition shadow-lg disabled:opacity-50">
+             <ArrowPathIcon className={`h-5 w-5 ${loading ? 'animate-spin' : ''}`}/>
            </button>
         </div>
 

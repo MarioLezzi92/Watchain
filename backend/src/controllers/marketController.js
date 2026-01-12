@@ -61,12 +61,23 @@ export const buy = async (req, res) => {
 export const listPrimary = async (req, res) => {
   try {
     const { tokenId, price } = req.body;
-    const out = await marketService.listPrimary(req.user.role, tokenId, price);
+    const { role, sub: address } = req.user;
+
+    const isApproved = await marketService.checkNFTApproval(role, address);
+    if (!isApproved) {
+      return res.status(412).json({
+        error: "MARKET_APPROVAL_REQUIRED",
+        message: "Approval required: call /market/approve-market first"
+      });
+    }
+
+    const out = await marketService.listPrimary(role, tokenId, price);
     res.json(out);
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
 };
+
 
 
 
@@ -77,27 +88,23 @@ export const listSecondary = async (req, res) => {
     const { tokenId, price } = req.body;
     const { role, sub: address } = req.user;
 
-    console.log(`[${reqId}] -> listSecondary START`, { tokenId, price, role, address });
-
     const isApproved = await marketService.checkNFTApproval(role, address);
-    console.log(`[${reqId}] isApprovedForAll =`, isApproved, { operator: process.env.WATCH_MARKET_ADDRESS || "config.watchMarketAddress" });
 
     if (!isApproved) {
-      console.log(`[${reqId}] doing setApprovalForAll...`);
-      const tx = await marketService.approveMarketplace(role, address);
-      console.log(`[${reqId}] setApprovalForAll DONE`, tx);
+      return res.status(412).json({
+        error: "MARKET_APPROVAL_REQUIRED",
+        message: "Approval required: call /market/approve-market first"
+      });
     }
 
-    console.log(`[${reqId}] calling listSecondary on market...`);
     const out = await marketService.listSecondary(role, tokenId, price, address);
-    console.log(`[${reqId}] listSecondary DONE`, out);
-
     return res.json(out);
   } catch (err) {
     console.error(`[${reqId}] listSecondary ERROR:`, err.message);
     return res.status(400).json({ error: err.message });
   }
 };
+
 
 
 export const cancelListing = async (req, res) => {

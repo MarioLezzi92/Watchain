@@ -60,3 +60,11 @@ export async function setReseller(who, enabled = true) {
 export async function getResellerStatus(address) {
   return await apiGet(`/inventory/is-reseller?address=${address}`);
 }
+
+export async function getApprovalStatus() {
+  return await apiGet("/market/approval-status");
+}
+
+export async function approveMarket() {
+  return await apiPost("/market/approve-market", {});
+}

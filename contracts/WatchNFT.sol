@@ -31,12 +31,12 @@ contract WatchNFT is ERC721, Ownable, EmergencyStop {
     // --- Access control ---
 
     modifier onlyFactory() {
-        require(msg.sender == factory, "Solo il Producer può eseguire questa azione");
+        require(msg.sender == factory, "Only Producer can do this");
         _;
     }
 
     modifier onlyReseller() {
-        require(reseller[msg.sender], "Solo un Reseller attivo può eseguire questa azione");
+        require(reseller[msg.sender], "Only Reseller can do this");
         _;
     }
 

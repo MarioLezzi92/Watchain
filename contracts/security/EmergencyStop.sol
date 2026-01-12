@@ -41,4 +41,3 @@ abstract contract EmergencyStop {
         emit Unpaused(msg.sender);
     }
 }
-2

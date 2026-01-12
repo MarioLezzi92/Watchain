@@ -74,7 +74,7 @@ contract WatchMarket is Ownable, ReentrancyGuard, EmergencyStop, PullPayments {
     function listPrimary(uint256 tokenId, uint256 price) external nonReentrant whenNotPaused {
         require(price > 0, "Price must be > 0");
         require(watch.ownerOf(tokenId) == msg.sender, "Not owner");
-        require(msg.sender == watch.factory(), "Solo il Producer può listare");
+        require(msg.sender == watch.factory(), "Only Producer can list");
 
         listings[tokenId] = Listing({
             seller: msg.sender,
@@ -90,7 +90,7 @@ contract WatchMarket is Ownable, ReentrancyGuard, EmergencyStop, PullPayments {
         require(price > 0, "Price must be > 0");
         require(watch.ownerOf(tokenId) == msg.sender, "Not owner");
         // Verifica che sia un Reseller autorizzato
-        require(watch.reseller(msg.sender), "Solo i Reseller autorizzati possono listare");
+        require(watch.reseller(msg.sender), "Only Reseller can list");
 
         listings[tokenId] = Listing({
             seller: msg.sender,
@@ -118,7 +118,7 @@ contract WatchMarket is Ownable, ReentrancyGuard, EmergencyStop, PullPayments {
         // 1. Controlli
         require(l.seller != address(0), "Item non listato");
         require(l.price > 0, "Prezzo non definito");
-        require(msg.sender != l.seller, "Il venditore non può comprare i suoi item");
+        require(msg.sender != l.seller, "Seller cannot buy own item");
 
         // 2. Aggiornamento stato
         delete listings[tokenId]; // rimuove listings per evitare acquisti doppi

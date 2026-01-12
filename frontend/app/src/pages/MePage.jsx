@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import AppShell from "../app/AppShell";
 import { useWallet } from "../context/WalletContext";
 import { useSystem } from "../context/SystemContext";
@@ -33,6 +33,8 @@ import {
   cancelListing,
   getListings,
   withdrawCredits,
+  getApprovalStatus,
+  approveMarket,
 } from "../services/marketService";
 
 export default function MePage() {
@@ -114,15 +116,52 @@ export default function MePage() {
   const openConfirm = (title, message, onConfirm) => setModals(p => ({ ...p, confirm: { title, message, onConfirm } }));
   const openSuccess = (msg) => setModals(p => ({ ...p, success: msg, detail: false, confirm: null }));
   const openError = (msg) => setModals(p => ({ ...p, error: msg, confirm: null }));
+  
+  const pendingActionRef = useRef(null);
+
+
+  const ensureMarketApprovalThen = async (actionFn) => {
+    const res = await getApprovalStatus(); // { isApproved: true/false }
+
+    if (res?.isApproved) {
+      return await actionFn();
+    }
+
+    // Apri modale: se conferma -> approve -> poi actionFn()
+    return new Promise((resolve, reject) => {
+      openConfirm(
+        "Autorizzazione richiesta",
+        "Autorizzi il Market a gestire i tuoi NFT per le operazioni di vendita?",
+        async () => {
+          try {
+            await approveMarket();
+            const out = await actionFn();
+            resolve(out);
+          } catch (e) {
+            reject(e);
+          }
+        }
+      );
+    });
+  };
 
   const handleError = (e) => {
-    const msg = formatError(e);
-    if (msg.includes("paused") || msg.includes("emergency")) {
-      openError("Sistema in PAUSA. Operazione bloccata.");
-    } else {
+      const msg = formatError(e);
+      
+      // 1. Controllo Pausa Sistema
+      if (msg.includes("paused") || msg.includes("emergency")) {
+        openError("Sistema in PAUSA. Operazione bloccata.");
+        return;
+      }
+
+      // 2. Controllo Ruolo Reseller (La modifica richiesta)
+      if (msg.includes("Only Reseller") || msg.includes("caller is not the reseller")) {
+        openError("Operazione riservata a Reseller autorizzati. Contattare il Producer.");
+        return;
+      }
+      // 3. Errore generico
       openError(msg);
-    }
-  };
+    };
 
   // --- AZIONI ---
   const performAction = async (actionFn, successMsg) => {
@@ -148,14 +187,22 @@ export default function MePage() {
     performAction(mintWatch, "Orologio creato con successo!");
   };
   
-  const handleList = async (item, price) => {
-    const fn = async () => {
-      if (item.priceLux) await cancelListing(item.tokenId);
-      if (role === "producer") await listPrimary(item.tokenId, price);
-      else await listSecondary(item.tokenId, price);
+
+  const handleList = async (item, priceLux) => {
+    const runListingLogic = async () => {
+      await performAction(async () => {
+          if (item.priceLux) await cancelListing(item.tokenId);
+            
+          if (role === "producer") {
+            await listPrimary(item.tokenId, priceLux);
+          } else {
+            await listSecondary(item.tokenId, priceLux);
+          }
+      }, "Listato con successo!");
     };
-    performAction(fn, "Listato con successo!");
+    ensureMarketApprovalThen(runListingLogic);
   };
+
 
   const handleCertify = (item) => performAction(() => certify(item.tokenId), `Orologio #${item.tokenId} certificato!`);
   const handleCancel = (item) => performAction(() => cancelListing(item.tokenId), "Listing rimosso.");
@@ -228,12 +275,16 @@ export default function MePage() {
 
             {role === "producer" && (
                 <div className="border-t border-white/10 pt-6 space-y-3">
-                    <div className="text-[#D4AF37] text-xs font-bold uppercase tracking-widest mb-2 flex items-center gap-2">
+                    <div className="text-[#D4AF37] text-xs font-bold uppercase tracking-widest mb-3 flex items-center gap-2 opacity-80">
                         <WrenchScrewdriverIcon className="h-4 w-4"/> Admin Tools
                     </div>
                     
-                    <button onClick={() => setModals(p => ({...p, reseller: true}))} className="w-full flex items-center justify-between p-3 rounded-xl bg-[#5e0a0a] hover:bg-[#700c0c] transition border border-white/5 group">
-                        <span className="text-sm font-bold flex items-center gap-2"><UsersIcon className="h-5 w-5 text-red-200"/> Gestisci Reseller</span>
+                    <button 
+                        onClick={() => setModals(p => ({...p, reseller: true}))} 
+                        className="w-full flex items-center justify-between p-3 rounded-xl bg-[#4A0404] border border-[#D4AF37]/30 hover:border-[#D4AF37] hover:bg-[#5e0a0a] transition-all group shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]">
+                        
+                        <span className="text-sm font-bold flex items-center gap-2">
+                          <UsersIcon className="h-5 w-5 text-red-200"/> Gestisci Reseller</span>
                     </button>
                     
                     <button onClick={() => setModals(p => ({...p, security: true}))} className="w-full flex items-center justify-between p-3 rounded-xl bg-[#5e0a0a] hover:bg-[#700c0c] transition border border-white/5 group">
@@ -260,13 +311,14 @@ export default function MePage() {
                    <button 
                      onClick={() => openConfirm("Nuovo Orologio", "Vuoi coniare un nuovo orologio?", handleMint)}
                      disabled={busy || factoryPaused}
-                     className="flex items-center gap-2 px-5 py-2.5 bg-[#4A0404] text-[#FDFBF7] font-bold rounded-xl shadow-lg hover:bg-[#5e0a0a] disabled:opacity-50 transition"
+                     title="Conia Nuovo Orologio"
+                     className="flex items-center gap-2 px-5 py-2.5 bg-[#4A0404] border border-[#D4AF37]/30 text-[#D4AF37] font-bold rounded-xl shadow-lg hover:bg-[#5e0a0a] hover:border-[#D4AF37] disabled:opacity-50 transition"
                    >
                       <PlusIcon className="h-5 w-5"/> Mint
                    </button>
                )}
-               <button onClick={() => refreshInventory(false)} disabled={loadingInventory} className="p-2.5 bg-white border border-[#4A0404]/10 rounded-xl text-[#4A0404] hover:bg-gray-50 transition shadow-sm">
-                  <ArrowPathIcon className={`h-5 w-5 ${loadingInventory ? 'animate-spin' : ''}`}/>
+               <button onClick={() => refreshInventory(false)} disabled={loadingInventory} className="p-2.5 bg-[#4A0404] border border-[#D4AF37]/30 rounded-xl text-[#D4AF37] hover:bg-[#5e0a0a] hover:border-[#D4AF37] transition shadow-lg disabled:opacity-50">
+                  <ArrowPathIcon title="Aggiorna Inventario" className={`h-5 w-5 ${loadingInventory ? 'animate-spin' : ''}`}/>
                </button>
             </div>
           </div>
