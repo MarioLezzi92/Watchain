@@ -64,12 +64,10 @@ function upsertEnvVars(envPath, newVars) {
   fs.writeFileSync(envPath, updated.join("\n"), "utf8");
 }
 
-// FIX: Estrazione corretta del bytecode per FireFly
 function loadArtifact(p) {
   if (!fs.existsSync(p)) die(`Artifact non trovato: ${p}`);
   const j = JSON.parse(fs.readFileSync(p, "utf8"));
   
-  // Estraiamo solo la stringa del bytecode
   let bytecode = j.bytecode || (j.data && j.data.bytecode) || "";
   if (typeof bytecode === 'object') bytecode = bytecode.object;
   
@@ -101,6 +99,26 @@ async function ffGet(url) {
   return json;
 }
 
+// Recupera gli account dallo stack FireFly attivo
+async function getFireFlyAccounts(base) {
+  try {
+    // Chiediamo i verifier (identità on-chain)
+    const verifiers = await ffGet(`${base}/verifiers`);
+    
+    // Filtriamo per prendere solo gli indirizzi ethereum
+    const accounts = verifiers
+      .filter(v => v.type === "ethereum_address")
+      .map(v => v.value);
+
+    // FIX: L'API spesso restituisce gli account in ordine inverso (LIFO).
+    // Li giriamo per avere [Org0, Org1, Org2] come nella CLI.
+    return accounts.reverse(); 
+  } catch (e) {
+    console.warn("⚠️  Impossibile recuperare account da FireFly:", e.message);
+    return [];
+  }
+}
+
 async function waitOperation(base, opId, timeoutMs = 300000) {
   const start = Date.now();
   while (true) {
@@ -116,7 +134,6 @@ async function waitOperation(base, opId, timeoutMs = 300000) {
 async function deployContract({ base, fromKey, name, artifactPath, inputArgs }) {
   const { abi, bytecode } = loadArtifact(artifactPath);
 
-  // 'contract' deve essere solo la stringa del bytecode
   const resp = await ffPost(`${base}/contracts/deploy?publish=true`, {
     contract: bytecode, 
     definition: abi,
@@ -140,16 +157,51 @@ async function deployContract({ base, fromKey, name, artifactPath, inputArgs }) 
 async function main() {
   const env = readEnvFile(BACKEND_ENV_PATH);
   const base = env.FF_PRODUCER_BASE;
-  const producerAddr = env.PRODUCER_ADDR;
   
-  // Recuperiamo gli indirizzi per la distribuzione automatica di LUX
-  const resellerAddr = env.RESELLER_ADDR || "0x0000000000000000000000000000000000000000";
-  const consumerAddr = env.CONSUMER_ADDR || "0x0000000000000000000000000000000000000000";
+  if (!base) die("FF_PRODUCER_BASE mancante nel file .env");
 
-  if (!base) die("FF_PRODUCER_BASE mancante");
-  if (!isHexAddress(producerAddr)) die("PRODUCER_ADDR non valido");
+  console.log(`🔌 Connesso a FireFly su: ${base}`);
+  
+  // --- AUTO-CONFIGURAZIONE UTENTI ---
+  const accounts = await getFireFlyAccounts(base);
+  
+  let producerAddr, resellerAddr, consumerAddr;
 
-  // Deploy LUXURYCOIN con i due parametri del costruttore
+  if (accounts.length > 0) {
+    console.log(`🔎 Trovati ${accounts.length} account nello stack.`);
+    // Assegnazione smart:
+    // Se c'è solo 1 account -> tutti ruoli a lui
+    // Se ce ne sono 2 -> Producer(0), Reseller(1), Consumer(0)
+    // Se ce ne sono 3+ -> Producer(0), Reseller(1), Consumer(2)
+    producerAddr = accounts[0];
+    resellerAddr = accounts[1] || accounts[0];
+    consumerAddr = accounts[2] || accounts[0];
+  } else {
+    // Fallback al vecchio metodo (lettura da env) se l'API fallisce
+    console.warn("⚠️  Nessun account rilevato via API, uso .env...");
+    producerAddr = env.PRODUCER_ADDR;
+    resellerAddr = env.RESELLER_ADDR || "0x0000000000000000000000000000000000000000";
+    consumerAddr = env.CONSUMER_ADDR || "0x0000000000000000000000000000000000000000";
+  }
+
+  if (!isHexAddress(producerAddr)) die("ERRORE: Impossibile trovare un PRODUCER_ADDR valido.");
+
+  console.log("\n=== 👥 UTENTI RILEVATI ===");
+  console.log(`PRODUCER (Deployer): ${producerAddr}`);
+  console.log(`RESELLER           : ${resellerAddr}`);
+  console.log(`CONSUMER           : ${consumerAddr}`);
+
+  // Aggiorniamo subito il .env con gli utenti corretti
+  upsertEnvVars(BACKEND_ENV_PATH, {
+    PRODUCER_ADDR: producerAddr,
+    RESELLER_ADDR: resellerAddr,
+    CONSUMER_ADDR: consumerAddr
+  });
+  console.log("📝 backend/.env aggiornato con i nuovi utenti.\n");
+
+  // --- DEPLOY CONTRACTS ---
+
+  // Deploy LUXURYCOIN (passando reseller e consumer corretti)
   const luxuryAddr = await deployContract({
     base,
     fromKey: producerAddr,
@@ -174,18 +226,19 @@ async function main() {
     inputArgs: [luxuryAddr, watchNftAddr],
   });
 
-  console.log("\n=== CONTRACT ADDRESSES ===");
+  console.log("\n=== 📜 CONTRACT ADDRESSES ===");
   console.log(`LUXURYCOIN_ADDRESS=${luxuryAddr}`);
   console.log(`WATCHNFT_ADDRESS=${watchNftAddr}`);
   console.log(`WATCHMARKET_ADDRESS=${watchMarketAddr}`);
 
+  // Aggiorniamo il .env con gli indirizzi dei contratti
   upsertEnvVars(BACKEND_ENV_PATH, {
     LUXURYCOIN_ADDRESS: luxuryAddr,
     WATCHNFT_ADDRESS: watchNftAddr,
     WATCHMARKET_ADDRESS: watchMarketAddr,
   });
 
-  console.log("\nbackend/.env aggiornato ✔");
+  console.log("\n✅ backend/.env aggiornato con i contratti completi!");
 }
 
 main().catch((e) => {

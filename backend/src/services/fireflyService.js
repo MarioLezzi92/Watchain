@@ -77,7 +77,7 @@ export async function ffQuery(role, apiName, method, input = {}, key = "") {
   }
 }
 
-// funzione che useremo per l'inventario
+// funzione per l'inventario
 export async function ffGetCore(role, path, params = {}) {
   const base = getBase(role); 
   // Rimuove slash iniziale dal path se presente per evitare doppi //
