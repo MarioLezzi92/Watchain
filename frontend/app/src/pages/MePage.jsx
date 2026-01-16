@@ -3,7 +3,7 @@ import AppShell from "../app/AppShell";
 import { useWallet } from "../context/WalletContext";
 import { useSystem } from "../context/SystemContext";
 import { formatError, formatLux } from "../lib/formatters"; 
-import { apiPost } from "../lib/api";
+import { apiPost, apiGet } from "../lib/api"; 
 
 // Components
 import WatchCard from "../components/domain/WatchCard";
@@ -31,7 +31,7 @@ import {
   listSecondary,
   certify,
   cancelListing,
-  getListings,
+  getActiveListings as getListings, 
   withdrawCredits,
   getApprovalStatus,
   approveMarket,
@@ -65,7 +65,6 @@ export default function MePage() {
     
     try {
       const activeListings = await getListings().catch(() => []);
-      const { apiGet } = await import("../lib/api");
       const myItems = await apiGet("/inventory");
 
       const listingsArr = Array.isArray(activeListings) ? activeListings : [];
@@ -117,17 +116,13 @@ export default function MePage() {
   const openSuccess = (msg) => setModals(p => ({ ...p, success: msg, detail: false, confirm: null }));
   const openError = (msg) => setModals(p => ({ ...p, error: msg, confirm: null }));
   
-  const pendingActionRef = useRef(null);
-
-
   const ensureMarketApprovalThen = async (actionFn) => {
-    const res = await getApprovalStatus(); // { isApproved: true/false }
+    const res = await getApprovalStatus();
 
     if (res?.isApproved) {
       return await actionFn();
     }
 
-    // Apri modale: se conferma -> approve -> poi actionFn()
     return new Promise((resolve, reject) => {
       openConfirm(
         "Autorizzazione richiesta",
@@ -148,18 +143,15 @@ export default function MePage() {
   const handleError = (e) => {
       const msg = formatError(e);
       
-      // 1. Controllo Pausa Sistema
       if (msg.includes("paused") || msg.includes("emergency")) {
         openError("Sistema in PAUSA. Operazione bloccata.");
         return;
       }
 
-      // 2. Controllo Ruolo Reseller (La modifica richiesta)
       if (msg.includes("Only Reseller") || msg.includes("caller is not the reseller")) {
         openError("Operazione riservata a Reseller autorizzati. Contattare il Producer.");
         return;
       }
-      // 3. Errore generico
       openError(msg);
     };
 
@@ -170,7 +162,7 @@ export default function MePage() {
       await actionFn();
       openSuccess(successMsg);
       refreshInventory(true);
-      await refreshWallet();
+      await refreshWallet(); 
     } catch (e) {
       handleError(e);
     } finally {
@@ -178,7 +170,6 @@ export default function MePage() {
     }
   };
 
-  // Wrapper azioni
   const handleMint = () => {
     if (factoryPaused) {
       openError("Produzione ferma: La Factory è in Pausa di Emergenza.");
@@ -212,7 +203,7 @@ export default function MePage() {
     try {
       setBusy(true);
       await apiPost(endpoint, { status: !currentStatus });
-      forceRefresh(); 
+      forceRefresh();
       closeModals();
     } catch (e) {
       handleError(e);
@@ -221,9 +212,9 @@ export default function MePage() {
     }
   };
 
-  // FORMATTAZIONE CREDITI
-  const displayCredits = pendingBalance ? String(pendingBalance).split(".")[0] : "0";  // Il bottone è abilitato se pendingBalance non è "0" (controllo sulla stringa grezza)
-  const canWithdraw = displayCredits !== "0" && displayCredits !== "";
+
+  const formattedCredits = formatLux(pendingBalance); 
+  const canWithdraw = pendingBalance !== "0" && pendingBalance !== "";
 
   return (
     <AppShell title="Watchain">
@@ -253,18 +244,18 @@ export default function MePage() {
                   <div className="text-[#D4AF37] text-2xl font-bold">{balance} LUX</div>
                </div>
 
-               {pendingBalance !== "0" && (
+               {canWithdraw && (
                <div className="bg-[#1A472A]/40 p-4 rounded-xl border border-[#D4AF37]/50 animate-pulse mt-4">
                   <div className="text-[#D4AF37] text-xs uppercase tracking-wider font-bold mb-1 flex items-center gap-1">
                     <BanknotesIcon className="h-4 w-4" /> Vendite da Incassare
                   </div>
-                  {/* Mostriamo il valore formattato, ma controlliamo il valore grezzo per il bottone */}
+                  {/* FIX: Ora visualizza il valore formattato correttamente */}
                   <div className="text-white text-xl font-bold mb-3">
-                     {displayCredits} LUX
+                     {formattedCredits} LUX 
                   </div>
                   <button
-                    onClick={() => openConfirm("Incasso Crediti", `Prelevare ${displayCredits} LUX?`, handleWithdraw)}
-                    disabled={busy || !canWithdraw}
+                    onClick={() => openConfirm("Incasso Crediti", `Prelevare ${formattedCredits} LUX?`, handleWithdraw)}
+                    disabled={busy}
                     className="w-full py-2 bg-[#D4AF37] hover:bg-[#c49f27] text-[#4A0404] font-bold rounded-lg text-xs uppercase tracking-wide shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     Preleva Ora

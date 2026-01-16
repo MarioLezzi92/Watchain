@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect } from "react";
 import { io } from "socket.io-client";
-import { apiGet } from "../lib/api";
+// 1. IMPORTIAMO SERVER_URL DA API.JS (Single Source of Truth)
+import { apiGet, SERVER_URL } from "../lib/api"; 
 
 /**
  * * Gestisce :
@@ -39,8 +40,7 @@ export function SystemProvider({ children }) {
     // Carica lo stato appena si apre il sito
     checkStatus();
 
-    // Connette il Socket una volta sola
-    const s = io("http://localhost:3001"); 
+    const s = io(SERVER_URL); 
     setSocket(s);
 
     s.on("connect", () => {
@@ -85,5 +85,4 @@ export function SystemProvider({ children }) {
   );
 }
 
-// Hook per usare il contesto facilmente
 export const useSystem = () => useContext(SystemContext);

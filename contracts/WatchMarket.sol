@@ -7,28 +7,15 @@ import "@openzeppelin/contracts/utils/Address.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/token/ERC721/IERC721.sol";
-
 import "./security/EmergencyStop.sol";
 import "./security/PullPayments.sol";
+import "./WatchNFT.sol"; 
 
-// Interfaccia minima per leggere direttamente dal contratto NFT
-interface IWatchNFT is IERC721 {
-    function certified(uint256 tokenId) external view returns (bool);
-    function reseller(address who) external view returns (bool);
-    function factory() external view returns (address);
-}
-
-// Marketplace sicuro: gestisce la compravendita di orologi
-// Eredita PullPayments  
 contract WatchMarket is Ownable, ReentrancyGuard, EmergencyStop, PullPayments {
     using SafeERC20 for IERC20;
     using Address for address payable;
 
-    // prima vendita e rivendita
-    enum SaleType {
-        PRIMARY,    // Producer -> Reseller
-        SECONDARY   // Reseller -> Consumer
-    }
+    enum SaleType { PRIMARY, SECONDARY }
 
     struct Listing {
         address seller;
@@ -36,76 +23,92 @@ contract WatchMarket is Ownable, ReentrancyGuard, EmergencyStop, PullPayments {
         SaleType saleType;
     }
 
-    IWatchNFT public immutable watch;
+    // Tipo concreto WatchNFT
+    WatchNFT public immutable watch; 
 
-    // ID orologio -> dettagli vendita
     mapping(uint256 => Listing) public listings;
 
-    // EVENTI
     event Listed(uint256 indexed tokenId, address indexed seller, uint256 price, SaleType saleType);
     event Canceled(uint256 indexed tokenId, address indexed seller);
     event Purchased(uint256 indexed tokenId, address indexed buyer, address indexed seller, uint256 price, SaleType saleType);
     event CreditsWithdrawn(address indexed payee, uint256 amount);
 
-
-    // collega il market al token di pagamento e alla collezione NFT
-    constructor(IERC20 paymentToken_, address watchNftAddress_) 
-        Ownable(msg.sender) 
-        PullPayments(paymentToken_) 
+    constructor(IERC20 paymentToken_, address watchNftAddress_)
+        Ownable(msg.sender)
+        PullPayments(paymentToken_)
     {
         require(watchNftAddress_ != address(0), "Invalid NFT address");
-        watch = IWatchNFT(watchNftAddress_);
+        watch = WatchNFT(watchNftAddress_); // Casting al contratto concreto
     }
 
-    // --- Gestione Emergenza ---
+    // --- Helpers ---
 
-    // Abilita/disabilita il mercato in caso di bug/attacchi
+    function _requireMarketApproved(address owner, uint256 tokenId) internal view {
+        bool ok = (watch.getApproved(tokenId) == address(this)) ||
+                  (watch.isApprovedForAll(owner, address(this)));
+        require(ok, "Market not approved for NFT");
+    }
+
+    function _isConsumer(address who) internal view returns (bool) {
+        if (who == watch.factory()) return false;
+        
+        // LOGICA CORRETTA (Fix del buco di sicurezza):
+        // Se 'knownReseller' è true, significa che è (o è stato) un business.
+        // Quindi NON è un consumatore, anche se attualmente disabilitato.
+        if (watch.knownReseller(who)) return false; 
+        
+        return true;
+    }
+
+    // --- GESTIONE EMERGENZA (AGGIUNTA MANCANTE) ---
+    // Questa funzione espone le funzioni internal di EmergencyStop.sol
     function setEmergencyStop(bool status) external onlyOwner {
         if (status) {
-            _pause(); // Blocca: listPrimary, listSecondary, buy, cancelListing, withdraw
+            _pause(); 
         } else {
-            _unpause(); // Riapre tutte le funzionalità
+            _unpause(); 
         }
     }
 
     // --- Listing Functions ---
 
-    // Mercato primario: solo il Producer (factory) può listare 
     function listPrimary(uint256 tokenId, uint256 price) external nonReentrant whenNotPaused {
-        require(price > 0, "Price must be > 0");
+        require(price > 0, "Price > 0");
         require(watch.ownerOf(tokenId) == msg.sender, "Not owner");
-        require(msg.sender == watch.factory(), "Only Producer can list");
-
+        require(msg.sender == watch.factory(), "Only Producer can list primary");
+        
+        _requireMarketApproved(msg.sender, tokenId);
+        
         listings[tokenId] = Listing({
             seller: msg.sender,
             price: price,
             saleType: SaleType.PRIMARY
         });
-
         emit Listed(tokenId, msg.sender, price, SaleType.PRIMARY);
     }
 
-    // Mercato secondario: solo i Reseller possono listare 
     function listSecondary(uint256 tokenId, uint256 price) external nonReentrant whenNotPaused {
-        require(price > 0, "Price must be > 0");
+        require(price > 0, "Price > 0");
         require(watch.ownerOf(tokenId) == msg.sender, "Not owner");
-        // Verifica che sia un Reseller autorizzato
-        require(watch.reseller(msg.sender), "Only Reseller can list");
+
+        // CHECK: Solo Reseller ATTIVI possono listare
+        // Se è disabilitato, reseller[msg.sender] è false e questo fallisce.
+        require(watch.reseller(msg.sender), "Only Active Reseller can list");
+
+        require(watch.certified(tokenId), "Only certified watches");
+        _requireMarketApproved(msg.sender, tokenId);
 
         listings[tokenId] = Listing({
             seller: msg.sender,
             price: price,
             saleType: SaleType.SECONDARY
         });
-
         emit Listed(tokenId, msg.sender, price, SaleType.SECONDARY);
     }
 
-    // Rimuove un orologio dal mercato
     function cancelListing(uint256 tokenId) external nonReentrant whenNotPaused {
         Listing memory l = listings[tokenId];
         require(l.seller == msg.sender, "Not seller");
-        
         delete listings[tokenId];
         emit Canceled(tokenId, msg.sender);
     }
@@ -115,37 +118,32 @@ contract WatchMarket is Ownable, ReentrancyGuard, EmergencyStop, PullPayments {
     function buy(uint256 tokenId) external nonReentrant whenNotPaused {
         Listing memory l = listings[tokenId];
         
-        // 1. Controlli
-        require(l.seller != address(0), "Item non listato");
-        require(l.price > 0, "Prezzo non definito");
+        require(l.seller != address(0), "Item not listed");
         require(msg.sender != l.seller, "Seller cannot buy own item");
+        require(watch.ownerOf(tokenId) == l.seller, "Seller not owner anymore");
+        _requireMarketApproved(l.seller, tokenId);
 
-        // 2. Aggiornamento stato
-        delete listings[tokenId]; // rimuove listings per evitare acquisti doppi
-        
-        // Accumula credio per il venditore, non invia subito soldi -> PullPayment
-        _accrueCredit(l.seller, l.price); 
+        if (l.saleType == SaleType.PRIMARY) {
+            // Primary: Consenti acquisto se è un Business Conosciuto (Active o Disabled)
+            require(watch.knownReseller(msg.sender), "Only resellers can buy primary");
+            require(l.seller == watch.factory(), "Primary seller must be producer");
+        } else {
+            // Secondary: Solo Consumer (knownReseller deve essere FALSE)
+            require(watch.certified(tokenId), "Watch not certified");
+            require(_isConsumer(msg.sender), "Only consumer can buy secondary");
+        }
 
-        // 3. Interazioni esterne
-        // Preleva i soldi dal compratore verso il contratto market
+        delete listings[tokenId];
         paymentToken.safeTransferFrom(msg.sender, address(this), l.price);
-        
-        //Sposta NFT dal venditore al compratore
+        _accrueCredit(l.seller, l.price);
         watch.safeTransferFrom(l.seller, msg.sender, tokenId);
 
         emit Purchased(tokenId, msg.sender, l.seller, l.price, l.saleType);
     }
 
-
-    // --- Withdrawal (PullPayments) ---
-
-    // permette ai venditori di prelevare LUX guadagnati dalle vendite
+    // --- Withdrawal ---
     function withdraw() external nonReentrant whenNotPaused returns (uint256 amount) {
         amount = _withdrawCredit(msg.sender);
         emit CreditsWithdrawn(msg.sender, amount);
-    }
-
-    function getListing(uint256 tokenId) external view returns (Listing memory) {
-        return listings[tokenId];
     }
 }

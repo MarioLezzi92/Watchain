@@ -1,8 +1,8 @@
 import React, { useState } from "react";
-import { useNavigate } from "react-router-dom"; // Navigazione veloce
+import { useNavigate } from "react-router-dom"; 
 import { apiGet, apiPost } from "../lib/api";
-import { useWallet } from "../context/WalletContext"; // Per aggiornare lo stato globale
-
+import { saveSession } from "../lib/auth"; 
+import { useWallet } from "../context/WalletContext"; 
 import { useSystem } from "../context/SystemContext"; 
 
 async function connectMetamask() {
@@ -15,8 +15,6 @@ async function connectMetamask() {
 export default function Login() {
   const navigate = useNavigate();
   const { refreshWallet } = useWallet();
-  
-  // 2. RECUPERA LA FUNZIONE forceRefresh
   const { forceRefresh } = useSystem(); 
 
   const [loading, setLoading] = useState(false);
@@ -26,7 +24,7 @@ export default function Login() {
     setErr("");
     setLoading(true);
     try {
-      // ... (Connessione e Firma) ...
+      // 1. Connessione & Firma
       const { address } = await connectMetamask();
       const resNonce = await apiGet(`/auth/nonce?address=${address}`);
       const nonce = resNonce?.nonce; 
@@ -38,20 +36,18 @@ export default function Login() {
         params: [message, address],
       });
 
+      // 2. Login al Backend
       const resLogin = await apiPost("/auth/login", { address, signature });
       const token = resLogin?.token;
       const role = resLogin?.role;
 
       if (!token || !role) throw new Error("Login fallito: credenziali non valide.");
 
-      localStorage.setItem("token", token);
-      localStorage.setItem("role", role);
-      localStorage.setItem("address", address);
+      // 3. SALVATAGGIO SICURO (Usa auth.js)
+      saveSession(token, address, role);
 
-      // 3. AGGIORNAMENTO TOTALE
-      // Aggiorna il Wallet (Soldi/Ruolo)
+      // 4. Aggiornamento Stati
       await refreshWallet(); 
-      
       forceRefresh(); 
       
       navigate("/market"); 
@@ -63,13 +59,11 @@ export default function Login() {
       setLoading(false);
     }
   };
+
   return (
     <div className="min-h-screen w-full bg-[#f2e9d0] flex items-center justify-center p-6">
-      
       <div className="w-full max-w-lg bg-[#4A0404] text-[#f2e9d0] rounded-3xl shadow-2xl overflow-hidden relative border border-[#5e0a0a]">
-        
         <div className="h-2 w-full bg-[#D4AF37]"></div>
-
         <div className="p-10 md:p-14 text-center">
           
           <div className="mx-auto h-16 w-16 bg-[#D4AF37] rounded-full flex items-center justify-center mb-6 shadow-lg text-[#4A0404]">
@@ -92,11 +86,11 @@ export default function Login() {
             Identity verification is handled automatically via JWT.
           </p>
 
-          {err ? (
+          {err && (
             <div className="mb-6 rounded-xl border border-red-500/50 bg-red-900/30 p-4 text-red-200 text-sm animate-pulse">
               {err}
             </div>
-          ) : null}
+          )}
 
           <button
             onClick={onLogin}

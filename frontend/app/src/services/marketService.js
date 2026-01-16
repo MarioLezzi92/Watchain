@@ -1,8 +1,9 @@
 import { apiGet, apiPost } from "../lib/api";
-import { ethers } from "ethers";
 import { parseLux } from "../lib/formatters";
+
 // --- LETTURA ---
-export async function getListings() {
+// Rinominata da getListings a getActiveListings per allinearsi a MarketPage.jsx
+export async function getActiveListings() {
   return await apiGet("/market/listings"); 
 }
 
@@ -42,7 +43,8 @@ export async function listSecondary(tokenId, priceLux) {
 }
 
 // --- SCRITTURA COMUNE ---
-export async function buy(tokenId) {
+// Rinominata da buy a buyItem per allinearsi a MarketPage.jsx
+export async function buyItem(role, address, tokenId) {
   return await apiPost("/market/buy", { tokenId: String(tokenId) });
 }
 
@@ -67,4 +69,16 @@ export async function getApprovalStatus() {
 
 export async function approveMarket() {
   return await apiPost("/market/approve-market", {});
+}
+
+export async function getBackendConfig() {
+  return await apiGet("/auth/config");
+}
+
+export async function checkLuxAllowance() {
+  return await apiGet("/market/allowance");
+}
+
+export async function approveLux() {
+  return await apiPost("/market/approve-lux");
 }

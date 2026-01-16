@@ -4,55 +4,63 @@ import http from "http";
 import { Server } from "socket.io";
 import { config } from "./config/env.js";
 
-// Importiamo le rotte
 import routes from "./routes/index.js";
 import eventsRoutes from "./routes/eventsRoutes.js"; 
 
 const app = express();
-
-// 1. server HTTP per i Socket
 const server = http.createServer(app);
+
+// --- CONFIGURAZIONE CORS CENTRALIZZATA ---
+// Definiamo le origini ammesse una volta sola per coerenza tra Express e Socket
+const allowedOrigin = config.frontendOrigin || "http://localhost:5173";
+
+const corsOptions = {
+  origin: allowedOrigin,
+  credentials: true, // Permette cookie/header autorizzati
+  methods: ["GET", "POST", "PUT", "DELETE"]
+};
+
+// 1. Middleware Globali
+app.use(cors(corsOptions));
+// Aumentiamo il limite del body per gestire payload grossi di FireFly (es. storico eventi)
+app.use(express.json({ limit: "10mb" })); 
 
 // 2. Configurazione Socket.io
 const io = new Server(server, {
-  cors: {
-    origin: config.frontendOrigin || "http://localhost:5173", 
-    methods: ["GET", "POST"],
-    credentials: true
-  }
+  cors: corsOptions // Usa la stessa config di Express
 });
 
-
+// Rendiamo 'io' accessibile ovunque (es. nei controller)
 app.set("io", io);
 
-// Middleware
-app.use(cors({
-  origin: config.frontendOrigin || true,
-  credentials: true,
-}));
-app.use(express.json());
-
-// Log socket
 io.on("connection", (socket) => {
-  console.log("🔌 Frontend connesso al Socket:", socket.id);
+  console.log("🔌 Client connesso al Socket:", socket.id);
+  socket.on("disconnect", () => console.log("❌ Client disconnesso:", socket.id));
 });
 
-console.log("Configuration Loaded:");
-console.log(`- Market Contract: ${config.watchMarketAddress}`);
+// 3. Routing
+console.log("\n--- System Configuration ---");
+console.log(`> Market Contract: ${config.watchMarketAddress}`);
+console.log(`> Allowed Origin:  ${allowedOrigin}`);
+console.log("----------------------------\n");
 
-app.get("/", (req, res) => res.send("WatchDApp Backend v2.0 is Running"));
+app.get("/", (req, res) => res.send("WatchChain Backend v2.0 - System Operational 🟢"));
 
-// 3. ROTTE
-app.use("/api", routes);
-app.use("/api/events", eventsRoutes);
+// Rotte specifiche prima, poi il router generale
+app.use("/api/events", eventsRoutes); // Webhooks FireFly
+app.use("/api", routes);              // API Applicative (Auth, Market, etc.)
 
-// Error Handler
+// 4. Global Error Handler (Cattura errori non gestiti dai controller)
 app.use((err, req, res, next) => {
-  console.error("[Global Error]", err.stack);
-  res.status(500).json({ error: "Internal Server Error", message: err.message });
+  console.error("🔥 UNCAUGHT ERROR:", err.stack);
+  res.status(500).json({ 
+    success: false, 
+    error: "Errore interno del server", 
+    details: process.env.NODE_ENV === 'development' ? err.message : undefined 
+  });
 });
 
-// 4. AVVIO
+// 5. Avvio Server
 server.listen(config.port, () => {
-  console.log(`\n🚀 Server & Socket listening on http://localhost:${config.port}`);
+  console.log(`🚀 Server avviato su http://localhost:${config.port}`);
 });

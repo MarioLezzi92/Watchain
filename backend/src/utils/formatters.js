@@ -1,26 +1,38 @@
+import { ethers } from "ethers";
 
 /**
- * Estrae il dato utile dalle risposte di FireFly (FF).
- * Gestisce i vari formati (output, result, data) in modo che il frontend
- * riceva sempre il valore pulito.
+ * UTILS: FORMATTERS
+ * Gestione sicura dei formati dati (FireFly output, Conversioni Valuta).
+ */
+
+/**
+ * Estrae il dato utile dalle risposte nidificate di FireFly.
  */
 export function unwrapFFOutput(resp) {
   if (!resp) return undefined;
+  // FireFly può restituire dati in .output, .result o direttamente
   const out = resp.output ?? resp.result ?? resp.data ?? resp;
+  
   if (out == null) return undefined;
+  
+  // Se è un primitivo, ritornalo
   if (typeof out === "string" || typeof out === "number" || typeof out === "boolean") return out;
+  
+  // Se è un array singolo (comune in Solidity), prendi il primo elemento
   if (Array.isArray(out)) return out[0];
+  
+  // Se è un oggetto con una sola chiave (es. { "balance": "100" }), estrai il valore
   if (typeof out === "object") {
     const keys = Object.keys(out);
     if (keys.length === 1) return out[keys[0]];
     return out;
   }
+  
   return undefined;
 }
 
 /**
- * Converte stringhe o numeri in booleani reali.
- * Fondamentale per la proprietà 'certified' o altri flag della blockchain.
+ * Converte in booleano (gestisce anche stringhe "true"/"1").
  */
 export function parseBool(v) {
   if (typeof v === "boolean") return v;
@@ -29,39 +41,38 @@ export function parseBool(v) {
 }
 
 /**
- * Normalizza il ruolo utente per evitare errori di case-sensitivity.
+ * Normalizza i ruoli (minuscolo e senza spazi).
  */
 export function normalizeRole(role) {
   return String(role || "").trim().toLowerCase();
 }
 
 /**
- * CONVERSIONE DA LUX A WEI (Per inviare dati alla blockchain)
- * Prende un numero intero (es. "14") e aggiunge 18 zeri.
- * Gestisce solo numeri interi per evitare errori di precisione.
+ * CONVERSIONE SICURA: LUX -> WEI (Input Backend)
+ * Usa ethers per gestire correttamente i decimali (18).
+ * Es: "1.5" -> "1500000000000000000"
  */
 export function luxToWeiString(amountLux) {
-  const amount = String(amountLux || "0").trim().split('.')[0]; 
-  if (amount === "0" || amount === "") return "0";
-  return amount + "000000000000000000";
+  try {
+    if (!amountLux || amountLux === "0") return "0";
+    // parseEther gestisce automaticamente i 18 decimali standard EVM
+    return ethers.parseEther(String(amountLux)).toString();
+  } catch (err) {
+    console.error(`Errore conversione LuxToWei [${amountLux}]:`, err.message);
+    throw new Error("Formato importo non valido");
+  }
 }
 
 /**
- * CONVERSIONE DA WEI A LUX 
- * Toglie esattamente 18 cifre dalla stringa ricevuta dalla blockchain.
- * Se il valore è inferiore a 10^18, restituisce "0".
+ * CONVERSIONE SICURA: WEI -> LUX (Output Backend)
+ * Es: "1500000000000000000" -> "1.5"
  */
 export function weiToLuxString(wei) {
-  const s = String(wei || "0").trim();
-  
-  // Se la stringa è più corta di 18 caratteri, il valore è < 1 LUX
-  if (s.length <= 18) {
-    // Gestione sicura per evitare stringhe vuote o errori di slice
-    const pad = s.padStart(19, "0");
-    const intPart = pad.slice(0, -18).replace(/^0+/, "") || "0";
-    return intPart; 
+  try {
+    if (!wei || wei === "0") return "0";
+    return ethers.formatEther(String(wei));
+  } catch (err) {
+    console.error(`Errore conversione WeiToLux [${wei}]:`, err.message);
+    return "0";
   }
-  
-  // Ritorna la parte intera togliendo i 18 decimali
-  return s.slice(0, s.length - 18); 
 }

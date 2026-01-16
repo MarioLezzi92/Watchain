@@ -7,17 +7,17 @@ import "./security/EmergencyStop.sol";
 
 contract WatchNFT is ERC721, Ownable, EmergencyStop {
     uint256 public nextId;
-
-    // produttore: fisso, non modificabile per sicurezza
     address public immutable factory;
 
-    // venditori autorizzati a certificare
+    // Mapping per i ruoli
     mapping(address => bool) public reseller;
+    
+    // AGGIUNTO: Necessario perché il tuo WatchMarket lo chiama alla riga 54
+    mapping(address => bool) public knownReseller; 
 
-    // Stato certificazione per ogni orologio tokenId -> certificato
-    mapping(uint256 => bool) public certified;
+    // FIX FIREFLY: Usiamo private + funzione manuale per evitare l'errore FF10304
+    mapping(uint256 => bool) private _certified;
 
-    // EVENTI 
     event ResellerEnabled(address indexed who);
     event ResellerDisabled(address indexed who);
     event Manufactured(uint256 indexed tokenId, address indexed to);
@@ -28,47 +28,33 @@ contract WatchNFT is ERC721, Ownable, EmergencyStop {
         factory = factory_;
     }
 
-    // --- Access control ---
-
     modifier onlyFactory() {
         require(msg.sender == factory, "Only Producer can do this");
         _;
     }
 
     modifier onlyReseller() {
-        require(reseller[msg.sender], "Only Reseller can do this");
+        require(reseller[msg.sender], "Only Active Reseller can do this");
         _;
     }
 
-    // --- Gestione emergenza ---
-
-    // Permette di congelare le operazioni critiche in caso di bug/attacchi
     function setEmergencyStop(bool status) external onlyOwner {
-        if (status) {
-            _pause(); // Blocca: manufacture, certify
-        } else {
-            _unpause(); // Riapre le operazioni
-        }
+        if (status) _pause(); else _unpause();
     }
 
-    // --- Gestione ruoli ---
-
-    // Abilita/Disabilita Reseller
     function setReseller(address who, bool enabled) external onlyOwner {
         require(who != address(0), "reseller=0");
-        reseller[who] = enabled;
+        reseller[who] = enabled; 
         
-        // Emissione evento specifico in base all'azione
+        // Logica KnownReseller (serve al Market per non bloccare gli ex-reseller)
         if (enabled) {
+            knownReseller[who] = true;
             emit ResellerEnabled(who);
         } else {
             emit ResellerDisabled(who);
         }
     }
 
-    // --- Logica Principale ---
-
-    // PRODUCER: crea un nuovo orologio
     function manufacture(address to) external onlyFactory whenNotPaused returns (uint256 tokenId) {
         require(to != address(0), "to=0");
         tokenId = ++nextId;
@@ -76,12 +62,19 @@ contract WatchNFT is ERC721, Ownable, EmergencyStop {
         emit Manufactured(tokenId, to);
     }
 
-    // RESELLER: certifica un orologio (solo se lo possiede e se è Reseller)
+    // FIX FIREFLY: Funzione manuale con nome argomento ESPLICITO
+    // Questo risolve l'errore "Missing required input argument"
+    function certified(uint256 tokenId) external view returns (bool) {
+        return _certified[tokenId];
+    }
+
     function certify(uint256 tokenId) external onlyReseller whenNotPaused {
         require(ownerOf(tokenId) == msg.sender, "Must own watch to certify");
-        require(!certified[tokenId], "Already certified");
         
-        certified[tokenId] = true;
+        // Usiamo la variabile privata interna
+        require(!_certified[tokenId], "Already certified");
+        
+        _certified[tokenId] = true;
         emit Certified(tokenId, msg.sender);
     }
 }

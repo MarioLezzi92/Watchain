@@ -1,41 +1,42 @@
 import { verifyJwt } from "../utils/jwt.js";
 
 /**
- * MIDDLEWARE DI AUTENTICAZIONE
- * Protegge le rotte API sensibili.
- * * 1. Cerca il Token JWT nell'header 'Authorization'.
- * 2. Verifica che sia valido e non scaduto.
- * 3. Se valido, estrae i dati utente (indirizzo e ruolo) e li attacca a `req.user`.
- * 4. Se invalido, blocca la richiesta con errore 401.
+ * AUTH MIDDLEWARE
+ * Intercetta tutte le richieste protette.
+ * 1. Estrae il token Bearer.
+ * 2. Lo verifica crittograficamente.
+ * 3. Inietta l'identità (req.user) per i controller successivi.
  */
 export const requireAuth = (req, res, next) => {
   const authHeader = req.headers.authorization;
 
+  // 1. Check Header presenza
   if (!authHeader) {
-    return res.status(401).json({ success: false, error: "Authorization header missing" });
+    return res.status(401).json({ success: false, error: "Authorization header mancante" });
   }
 
-  // Rimuove il prefisso "Bearer " se presente
+  // 2. Estrazione Token (Supporta sia "Bearer <token>" che "<token>")
   const token = authHeader.startsWith("Bearer ") 
     ? authHeader.slice(7).trim() 
-    : authHeader;
+    : authHeader.trim();
 
   if (!token) {
-    return res.status(401).json({ success: false, error: "Token missing" });
+    return res.status(401).json({ success: false, error: "Token non fornito" });
   }
 
+  // 3. Verifica e Iniezione Identità
   try {
     const decoded = verifyJwt(token);
     
-   // Iniettiamo i dati utente nella richiesta così i Controller successivi sanno chi sta chiamando.
+    // Passiamo i dati vitali ai controller
     req.user = {
-      sub: decoded.account, 
-      role: decoded.role
+      sub: decoded.account, // Subject (Indirizzo Wallet)
+      role: decoded.role    // Ruolo (Producer/Reseller/Consumer)
     };
     
-    next(); // Passa al prossimo handler
+    next(); 
   } catch (err) {
-    console.error("Auth Token Error:", err.message);
-    return res.status(401).json({ success: false, error: "Token non valido o scaduto" });
+    console.warn(`[Auth Fail] IP: ${req.ip} - Error: ${err.message}`);
+    return res.status(401).json({ success: false, error: "Sessione scaduta o token non valido" });
   }
 };

@@ -5,26 +5,40 @@ import { fileURLToPath } from "url";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Carica il .env dalla root
-dotenv.config({ path: path.join(__dirname, "../../.env") });
+// 1. Caricamento .env
+const envPath = path.join(__dirname, "../../.env");
+dotenv.config({ path: envPath });
 
+// 2. Funzione di Validazione 
+function requireEnv(key, fallback = null) {
+  const value = process.env[key];
+  if (!value && fallback === null) {
+    console.error(`[FATAL ERROR] Manca la variabile d'ambiente obbligatoria: ${key}`);
+    console.error(`Verifica il file: ${envPath}`);
+    process.exit(1); 
+  }
+  return value || fallback;
+}
+
+// 3. Export Configurazione Validata
 export const config = {
-  port: process.env.PORT || 3001,
-  jwtSecret: process.env.JWT_SECRET,
-  frontendOrigin: process.env.FRONTEND_ORIGIN,
+  // Server
+  port: requireEnv("PORT", "3001"),
+  jwtSecret: requireEnv("JWT_SECRET"),
+  frontendOrigin: requireEnv("FRONTEND_ORIGIN", "*"),
   
-  // FireFly Base URLs
-  producerBase: process.env.FF_PRODUCER_BASE,
-  resellerBase: process.env.FF_RESELLER_BASE,
-  consumerBase: process.env.FF_CONSUMER_BASE,
+  // FireFly Nodes 
+  producerBase: requireEnv("FF_PRODUCER_BASE"),
+  resellerBase: requireEnv("FF_RESELLER_BASE"),
+  consumerBase: requireEnv("FF_CONSUMER_BASE"),
 
-  // Indirizzi Smart Contract
-  luxuryCoinAddress: process.env.LUXURYCOIN_ADDRESS,
-  watchNFTAddress: process.env.WATCHNFT_ADDRESS,
-  watchMarketAddress: process.env.WATCHMARKET_ADDRESS,
+  // Smart Contracts
+  luxuryCoinAddress: requireEnv("LUXURYCOIN_ADDRESS"),
+  watchNFTAddress: requireEnv("WATCHNFT_ADDRESS"),
+  watchMarketAddress: requireEnv("WATCHMARKET_ADDRESS"),
 
-  // Whitelist Address (per decidere i ruoli)
-  producerAddr: process.env.PRODUCER_ADDR,
-  resellerAddr: process.env.RESELLER_ADDR,
-  consumerAddr: process.env.CONSUMER_ADDR,
+  // Whitelisted Addresses
+  producerAddr: requireEnv("PRODUCER_ADDR"),
+  resellerAddr: requireEnv("RESELLER_ADDR"),
+  consumerAddr: requireEnv("CONSUMER_ADDR"),
 };

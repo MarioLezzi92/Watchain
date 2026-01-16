@@ -2,27 +2,31 @@ import jwt from "jsonwebtoken";
 import { config } from "../config/env.js";
 
 /**
- * Genera un Token JWT firmato (Sign).
- * @param {Object} payload - Dati da inserire nel token (indirizzo wallet, ruolo).
- * @param {string} expiresIn - Durata del token (default: 1 ora).
+ * UTILS: JWT MANAGER
+ * Gestione centralizzata della firma e verifica dei token.
+ * Security Note: Usiamo esplicitamente HS256 per evitare alg 'none' attacks.
  */
+
+// Genera un Token JWT firmato
 export function signJwt(payload, expiresIn = "1h") {
-  if (!config.jwtSecret) throw new Error("JWT_SECRET missing in config");
-  return jwt.sign(payload, config.jwtSecret, { expiresIn });
+  if (!config.jwtSecret) throw new Error("CRITICAL: JWT_SECRET missing in config");
+  
+  return jwt.sign(payload, config.jwtSecret, { 
+    expiresIn,
+    algorithm: "HS256" // Esplicitiamo l'algoritmo per sicurezza
+  });
 }
 
-/**
- * Verifica se un token è valido e originale.
- * Lancia un'eccezione se il token è scaduto o manomesso.
- */
+// Verifica e decodifica il token
 export function verifyJwt(token) {
-  if (!config.jwtSecret) throw new Error("JWT_SECRET missing in config");
-  return jwt.verify(token, config.jwtSecret);
+  if (!config.jwtSecret) throw new Error("CRITICAL: JWT_SECRET missing in config");
+  
+  return jwt.verify(token, config.jwtSecret, {
+    algorithms: ["HS256"] 
+  });
 }
 
-/**
- * Decodifica il token senza verificarne la firma 
- */
+// Decodifica senza verifica (Solo per debug o lettura lato client)
 export function decodeJwt(token) {
   return jwt.decode(token);
 }

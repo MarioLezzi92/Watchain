@@ -10,17 +10,26 @@ router.get("/listings", marketController.getListings);
 // Da qui in poi, tutte le rotte richiedono autenticazione
 router.use(requireAuth);
 
+// --- GESTIONE APPROVAZIONI ---
+// NFT (Per chi vende)
 router.get("/approval-status", marketController.getApprovalStatus);
 router.post("/approve-market", marketController.requestApproval);
 
+// LUX (Per chi compra) 
+router.get("/allowance", marketController.getLuxAllowance);
+router.post("/approve-lux", marketController.approveLux);
+
+// --- OPERAZIONI DI MERCATO ---
 router.post("/buy", marketController.buy);
 router.post("/listPrimary", marketController.listPrimary);
 router.post("/listSecondary", marketController.listSecondary);
 router.post("/cancel", marketController.cancelListing);
 
+// --- CREDITI E INCASSI ---
 router.get("/credits", marketController.getCredits);
 router.post("/withdraw", marketController.withdraw);
 
+// --- STATO DEL SISTEMA (ADMIN) ---
 router.get('/status', marketController.getEmergencyStatus);
 router.post('/emergency', marketController.setEmergencyStop);
 
