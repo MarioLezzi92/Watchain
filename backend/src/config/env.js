@@ -25,6 +25,7 @@ export const config = {
   // Server
   port: requireEnv("PORT", "3001"),
   jwtSecret: requireEnv("JWT_SECRET"),
+  webhookSecret: requireEnv("WEBHOOK_SECRET"),
   frontendOrigin: requireEnv("FRONTEND_ORIGIN", "*"),
   
   // FireFly Nodes 

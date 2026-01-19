@@ -12,7 +12,7 @@ contract WatchNFT is ERC721, Ownable, EmergencyStop {
     // Mapping per i ruoli
     mapping(address => bool) public reseller;
     
-    // AGGIUNTO: Necessario perché il tuo WatchMarket lo chiama alla riga 54
+   
     mapping(address => bool) public knownReseller; 
 
     // FIX FIREFLY: Usiamo private + funzione manuale per evitare l'errore FF10304

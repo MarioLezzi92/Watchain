@@ -29,7 +29,6 @@ abstract contract PullPayments {
 
 
     // Aggiunge fondi al saldo virtuale di un utente
-    //  soldi non restano nel contratto
     function _accrueCredit(address payee, uint256 amount) internal {
         require(payee != address(0), "payee=0");
         require(amount > 0, "amount=0");

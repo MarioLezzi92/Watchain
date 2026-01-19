@@ -10,19 +10,17 @@ import eventsRoutes from "./routes/eventsRoutes.js";
 const app = express();
 const server = http.createServer(app);
 
-// --- CONFIGURAZIONE CORS CENTRALIZZATA ---
-// Definiamo le origini ammesse una volta sola per coerenza tra Express e Socket
 const allowedOrigin = config.frontendOrigin || "http://localhost:5173";
 
 const corsOptions = {
   origin: allowedOrigin,
   credentials: true, // Permette cookie/header autorizzati
-  methods: ["GET", "POST", "PUT", "DELETE"]
+  methods: ["GET", "POST"]
 };
 
 // 1. Middleware Globali
 app.use(cors(corsOptions));
-// Aumentiamo il limite del body per gestire payload grossi di FireFly (es. storico eventi)
+// Aumentiamo il limite del body per gestire payload grossi di FireFly 
 app.use(express.json({ limit: "10mb" })); 
 
 // 2. Configurazione Socket.io
@@ -52,7 +50,7 @@ app.use("/api", routes);              // API Applicative (Auth, Market, etc.)
 
 // 4. Global Error Handler (Cattura errori non gestiti dai controller)
 app.use((err, req, res, next) => {
-  console.error("🔥 UNCAUGHT ERROR:", err.stack);
+  console.error(" UNCAUGHT ERROR:", err.stack);
   res.status(500).json({ 
     success: false, 
     error: "Errore interno del server", 
@@ -62,5 +60,5 @@ app.use((err, req, res, next) => {
 
 // 5. Avvio Server
 server.listen(config.port, () => {
-  console.log(`🚀 Server avviato su http://localhost:${config.port}`);
+  console.log(`Server avviato su http://localhost:${config.port}`);
 });

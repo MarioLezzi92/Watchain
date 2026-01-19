@@ -142,7 +142,7 @@ contract WatchMarket is Ownable, ReentrancyGuard, EmergencyStop, PullPayments {
     }
 
     // --- Withdrawal ---
-    function withdraw() external nonReentrant whenNotPaused returns (uint256 amount) {
+    function withdraw() external nonReentrant returns (uint256 amount) {
         amount = _withdrawCredit(msg.sender);
         emit CreditsWithdrawn(msg.sender, amount);
     }
