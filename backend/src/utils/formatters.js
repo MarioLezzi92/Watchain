@@ -8,29 +8,13 @@ import { ethers } from "ethers";
 /**
  * Estrae il dato utile dalle risposte nidificate di FireFly.
  */
-export function unwrapFFOutput(resp) {
-  if (!resp) return undefined;
-  // FireFly può restituire dati in .output, .result o direttamente
-  const out = resp.output ?? resp.result ?? resp.data ?? resp;
-  
-  if (out == null) return undefined;
-  
-  // Se è un primitivo, ritornalo
-  if (typeof out === "string" || typeof out === "number" || typeof out === "boolean") return out;
-  
-  // Se è un array singolo (comune in Solidity), prendi il primo elemento
-  if (Array.isArray(out)) return out[0];
-  
-  // Se è un oggetto con una sola chiave (es. { "balance": "100" }), estrai il valore
-  if (typeof out === "object") {
-    const keys = Object.keys(out);
-    if (keys.length === 1) return out[keys[0]];
-    return out;
+  export function unwrapFF(x) {
+    if (x == null) return null;
+    if (typeof x === "object" && "value" in x) return x.value;
+    return x;
   }
-  
-  return undefined;
-}
 
+  
 /**
  * Converte in booleano (gestisce anche stringhe "true"/"1").
  */

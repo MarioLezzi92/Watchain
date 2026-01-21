@@ -29,7 +29,7 @@ export default function WatchDetailsModal({ open, onClose, item, role, onList, o
     : itemOwner;
 
   const isMine = effectiveOwner === myAddress;
-  const canManage = isMine;
+  const canManage = (myAddress === itemSeller) || (myAddress === itemOwner);
   
   // Un reseller può certificare solo se possiede l'orologio, non è certificato e non è in vendita
   const canCertify = role === 'reseller' && isMine && !item.certified && !isListed;

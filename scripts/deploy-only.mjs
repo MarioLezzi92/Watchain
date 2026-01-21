@@ -43,6 +43,8 @@ function upsertEnvVars(envPath, newVars) {
   let content = fs.existsSync(envPath) ? fs.readFileSync(envPath, "utf8") : "";
   const lines = content.split(/\r?\n/);
   const found = new Set();
+  
+  // Aggiorna le righe esistenti
   const updated = lines.map((line) => {
     const trimmed = line.trim();
     if (!trimmed || trimmed.startsWith("#")) return line;
@@ -55,9 +57,12 @@ function upsertEnvVars(envPath, newVars) {
     }
     return line;
   });
+
+  // Aggiungi le nuove variabili se non trovate
   for (const [k, v] of Object.entries(newVars)) {
     if (!found.has(k)) updated.push(`${k}=${v}`);
   }
+  
   fs.writeFileSync(envPath, updated.join("\n"), "utf8");
 }
 
@@ -95,6 +100,9 @@ async function ffGet(url) {
 async function getFireFlyAccounts(base) {
   try {
     const verifiers = await ffGet(`${base}/verifiers`);
+    // L'API di solito restituisce i verifier in ordine cronologico inverso o sparso.
+    // .reverse() qui serve a ripristinare l'ordine di creazione (Producer -> Reseller -> Consumer)
+    // se il nodo li restituisce dal più recente al più vecchio.
     return verifiers.filter(v => v.type === "ethereum_address").map(v => v.value).reverse(); 
   } catch (e) {
     return [];
@@ -139,38 +147,73 @@ async function main() {
   const base = env.FF_PRODUCER_BASE;
   if (!base) die("FF_PRODUCER_BASE mancante in backend/.env");
 
+  // Recupera gli account dalla chain tramite FireFly
   const accounts = await getFireFlyAccounts(base);
-  const producerAddr = accounts[0] || env.PRODUCER_ADDR;
+  
+  // Mapping basato sull'ordine standard dello stack FireFly
+  // [0] = Producer (node 0)
+  // [1] = Reseller (node 1)
+  // [2] = Consumer (node 2)
+  const producerAddr = accounts[0];
+  const resellerAddr = accounts[1];
+  const consumerAddr = accounts[2];
+
+  if (!producerAddr || !resellerAddr || !consumerAddr) {
+    console.warn(`⚠️ ATTENZIONE: Trovati solo ${accounts.length} account. Assicurati che lo stack sia attivo.`);
+  }
 
   console.log("=== 🛠️  START DEPLOY ONLY ===");
-  console.log(`Utilizzando account: ${producerAddr}\n`);
+  console.log(`📡 Nodo FireFly: ${base}`);
+  console.log(`👤 Producer: ${producerAddr}`);
+  console.log(`👤 Reseller: ${resellerAddr}`);
+  console.log(`👤 Consumer: ${consumerAddr}\n`);
 
   // 1. LuxuryCoin
+  // Passiamo il Reseller e il Consumer come destinatari iniziali (opzionale, dipende dal tuo contratto)
   const luxAddr = await deployContract({
-    base, fromKey: producerAddr, name: "LuxuryCoin", artifactPath: ARTIFACTS.LuxuryCoin,
-    inputArgs: [accounts[1] || producerAddr, accounts[2] || producerAddr]
+    base, 
+    fromKey: producerAddr, 
+    name: "LuxuryCoin", 
+    artifactPath: ARTIFACTS.LuxuryCoin,
+    inputArgs: [resellerAddr || producerAddr, consumerAddr || producerAddr]
   });
 
   // 2. WatchNFT
+  // Il producer è il proprietario iniziale/minter
   const nftAddr = await deployContract({
-    base, fromKey: producerAddr, name: "WatchNFT", artifactPath: ARTIFACTS.WatchNFT,
+    base, 
+    fromKey: producerAddr, 
+    name: "WatchNFT", 
+    artifactPath: ARTIFACTS.WatchNFT,
     inputArgs: [producerAddr],
   });
 
   // 3. WatchMarket
+  // Collega il mercato ai token appena creati
   const marketAddr = await deployContract({
-    base, fromKey: producerAddr, name: "WatchMarket", artifactPath: ARTIFACTS.WatchMarket,
+    base, 
+    fromKey: producerAddr, 
+    name: "WatchMarket", 
+    artifactPath: ARTIFACTS.WatchMarket,
     inputArgs: [luxAddr, nftAddr],
   });
 
   console.log("\n=== 📝 AGGIORNAMENTO .ENV ===");
+  
+  // Aggiorniamo sia i contratti che gli utenti
   upsertEnvVars(BACKEND_ENV_PATH, {
+    // Indirizzi Contratti
     LUXURYCOIN_ADDRESS: luxAddr,
     WATCHNFT_ADDRESS: nftAddr,
     WATCHMARKET_ADDRESS: marketAddr,
+    
+    // Indirizzi Utenti (Nodi)
+    PRODUCER_ADDR: producerAddr,
+    RESELLER_ADDR: resellerAddr,
+    CONSUMER_ADDR: consumerAddr
   });
 
-  console.log("✅ File .env aggiornato con i nuovi indirizzi.");
+  console.log("✅ File .env aggiornato con successo.");
   console.log("Sincronizzazione completata.");
 }
 

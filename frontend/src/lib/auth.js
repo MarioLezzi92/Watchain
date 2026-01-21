@@ -1,72 +1,38 @@
-/**
- * GESTORE DELLA SESSIONE LOCALE
- * Centralizza l'accesso al LocalStorage ed evita "stringhe magiche" sparse nel codice.
- */
+// src/lib/auth.js
 
-// 1. Definiamo le costanti per le chiavi (così non sbagliamo a scriverle)
-const STORAGE_KEYS = {
-  TOKEN: "token",
-  ADDRESS: "address",
-  ROLE: "role"
-};
+const KEY_TOKEN = "watchain.jwt";
+const KEY_ADDRESS = "watchain.address";
+const KEY_ROLE = "watchain.role";
 
-// --- GETTERS (Lettura) ---
+export function saveSession(token, address, role) {
+  if (!token || !address || !role) throw new Error("saveSession: dati mancanti");
+  localStorage.setItem(KEY_TOKEN, token);
+  localStorage.setItem(KEY_ADDRESS, address);
+  localStorage.setItem(KEY_ROLE, role);
+}
+
+export function clearSession() {
+  localStorage.removeItem(KEY_TOKEN);
+  localStorage.removeItem(KEY_ADDRESS);
+  localStorage.removeItem(KEY_ROLE);
+}
 
 export function getToken() {
-  return localStorage.getItem(STORAGE_KEYS.TOKEN);
+  return localStorage.getItem(KEY_TOKEN);
 }
 
 export function getAddress() {
-  return localStorage.getItem(STORAGE_KEYS.ADDRESS);
+  return localStorage.getItem(KEY_ADDRESS);
 }
 
 export function getRole() {
-  return localStorage.getItem(STORAGE_KEYS.ROLE);
+  return localStorage.getItem(KEY_ROLE);
 }
 
-export function isAuthenticated() {
+export function isLoggedIn() {
   return !!getToken();
 }
 
-// --- SETTERS (Scrittura) ---
-
-/**
- * Salva l'intera sessione in un colpo solo.
- * Da usare nella pagina di Login dopo il successo.
- */
-export function saveSession(token, address, role) {
-  if(token) localStorage.setItem(STORAGE_KEYS.TOKEN, token);
-  if(address) localStorage.setItem(STORAGE_KEYS.ADDRESS, address);
-  if(role) localStorage.setItem(STORAGE_KEYS.ROLE, role);
-}
-
-/**
- * Pulisce tutto e reindirizza.
- * Nota: La chiamata API al backend per invalidare il token
- * dovrebbe essere fatta dal componente UI *prima* di chiamare questa funzione.
- */
 export function logout() {
-  // 1. Pulizia Totale
-  Object.values(STORAGE_KEYS).forEach(key => {
-    localStorage.removeItem(key);
-  });
-
-  // 2. Redirect forzato
-  window.location.href = "/market";
-}
-
-export function getAddressFromToken() {
-  const token = getToken();
-  if (!token) return null;
-  try {
-    // Decodifica la parte centrale (payload) del JWT
-    const base64Url = token.split('.')[1];
-    const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
-    const payload = JSON.parse(window.atob(base64));
-    
-    // Il backend mette l'indirizzo in 'sub'
-    return payload.sub; 
-  } catch (e) {
-    return null;
-  }
+  clearSession();
 }

@@ -1,6 +1,6 @@
 import React from "react"; 
 import { logout } from "../lib/auth";
-import { apiPost } from "../lib/api"; 
+import { AuthAPI } from "../lib/api"; 
 import { useNavigate, useLocation } from "react-router-dom";
 import { 
   UserCircleIcon, 
@@ -18,7 +18,7 @@ function SystemAlert({ marketPaused, factoryPaused }) {
   if (!marketPaused && !factoryPaused) return null;
 
   return (
-    <div className="bg-red-600 text-white px-4 py-3 shadow-xl flex items-center justify-center gap-3 animate-in slide-in-from-top duration-300 relative z-30">
+    <div className="bg-red-600 text-white px-4 py-3 shadow-xl flex items-center justify-center gap-3 animate-in slide-in-from-top duration-300 sticky top-20 z-30">
       <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-6 h-6 animate-pulse">
         <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
       </svg>
@@ -37,16 +37,18 @@ export default function AppShell({ title = "Watchain", children }) {
   const location = useLocation();
 
   const { marketPaused, factoryPaused } = useSystem();
+  
   const { address, balance } = useWallet();
   const balanceLux = balance; 
 
   const handleLogout = async () => {
     try {
-      await apiPost("/auth/logout");
+      await AuthAPI.logout(); 
     } catch (e) {
-      console.warn("Logout backend non riuscito (token scaduto?), procedo comunque locale.");
+      console.warn("Logout lato server fallito, procedo comunque con cleanup locale.");
     } finally {
       logout();
+      navigate("/login");
     }
   };
   

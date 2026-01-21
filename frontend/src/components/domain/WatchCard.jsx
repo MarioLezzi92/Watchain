@@ -5,8 +5,9 @@ import { shortAddr } from "../../lib/formatters";
 export default function WatchCard({ item, onOpen, variant = "market" }) {
   const tokenId = String(item?.tokenId ?? "");
   const certified = Boolean(item?.certified);
-  const seller = item?.seller ? String(item.seller) : null;
-  const owner = item?.owner ? String(item.owner) : null;
+
+  const seller = item?.seller ? String(item.seller).toLowerCase() : null;
+  const owner = item?.owner ? String(item.owner).toLowerCase() : null;
 
   const isListed = item?.priceLux != null;
   const showBanner = isListed && variant === "inventory";
@@ -34,7 +35,7 @@ export default function WatchCard({ item, onOpen, variant = "market" }) {
 
         {showBanner && (
           <div className="absolute bottom-0 left-0 w-full bg-[#D4AF37]/90 text-[#4A0404] text-center py-1 font-bold text-xs uppercase tracking-wider backdrop-blur-sm shadow-md">
-            In Vendita {item.priceLux !== "0" ? `(${item.priceLux} LUX)` : "(Errore Prezzo)"}
+            In Vendita {item.priceLux && item.priceLux !== "0" ? `(${item.priceLux} LUX)` : ""}
           </div>
         )}
       </div>

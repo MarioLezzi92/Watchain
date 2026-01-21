@@ -1,9 +1,8 @@
-import React, { useState, useEffect, useCallback, useRef } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import AppShell from "../app/AppShell";
 import { useWallet } from "../context/WalletContext";
 import { useSystem } from "../context/SystemContext";
-import { formatError, formatLux } from "../lib/formatters"; 
-import { apiPost, apiGet } from "../lib/api"; 
+import { formatError, formatLux, parseLux } from "../lib/formatters"; 
 
 // Components
 import WatchCard from "../components/domain/WatchCard";
@@ -13,6 +12,10 @@ import ResellerModal from "../components/domain/ResellerModal";
 import ConfirmModal from "../components/ui/ConfirmModal";
 import SuccessModal from "../components/ui/SuccessModal";
 import ErrorModal from "../components/ui/ErrorModal";
+
+// IMPORT CORRETTO: FF DEVE VENIRE DA '../lib/api' PER AVERE TUTTI I METODI
+import { FF } from "../lib/api"; 
+import { FF_BASE } from "../lib/firefly"; 
 
 // Icons
 import {
@@ -24,18 +27,14 @@ import {
   UsersIcon,
 } from "@heroicons/react/24/outline";
 
-// Services
-import {
-  mintWatch,
-  listPrimary,
-  listSecondary,
-  certify,
-  cancelListing,
-  getActiveListings as getListings, 
-  withdrawCredits,
-  getApprovalStatus,
-  approveMarket,
-} from "../services/marketService";
+const getRoleBaseUrl = (role) => {
+  if (role === 'producer') return FF_BASE.producer;
+  if (role === 'reseller') return FF_BASE.reseller;
+  return FF_BASE.consumer;
+};
+
+// COSTANTE FONDAMENTALE: L'indirizzo vuoto di Solidity
+const ZERO_ADDR = "0x0000000000000000000000000000000000000000";
 
 export default function MePage() {
   // 1. DATI GLOBALI 
@@ -64,37 +63,84 @@ export default function MePage() {
     if (!silent) setLoadingInventory(true);
     
     try {
-      const activeListings = await getListings().catch(() => []);
-      const myItems = await apiGet("/inventory");
+      const roleUrl = getRoleBaseUrl(role);
 
-      const listingsArr = Array.isArray(activeListings) ? activeListings : [];
-      const myItemsArr = Array.isArray(myItems) ? myItems : [];
+      // 1. Chiediamo al contratto NFT quanti orologi esistono in totale
+      const nextIdRes = await FF.watchNft.query.nextId(roleUrl);
+      const totalNFTs = Number(nextIdRes.output);
 
-      const normalized = myItemsArr.map((item) => {
-        const marketListing = listingsArr.find((l) => String(l.tokenId) === String(item.tokenId));
-        const rawPrice = marketListing ? marketListing.price : (item.price || "0");
-        const isListed = !!marketListing;
+      let myWatches = [];
 
-        return {
-          ...item,
-          tokenId: String(item.tokenId),
-          owner: String(item.owner || ""),
-          seller: String(item.seller || ""),
-          certified: Boolean(item.certified),
-          priceLux: isListed ? formatLux(rawPrice) : null,
-          saleType: item.saleType,
-          isMineSeller: (item.seller || "").toLowerCase() === address.toLowerCase(),
-          isMineOwner: (item.owner || "").toLowerCase() === address.toLowerCase(),
-        };
-      });
-      
-      setInventory(normalized);
+      // 2. Cicliamo per trovare quelli di cui SEI PROPRIETARIO o VENDITORE
+      for (let i = 1; i <= totalNFTs; i++) {
+        
+        // FIX CRITICO: I nomi dei parametri DEVONO coincidere con quelli di Solidity/FireFly.
+        // certified(uint256 tokenId) -> richiede 'tokenId'
+        // listings(uint256 tokenId)  -> richiede 'tokenId' (o chiave vuota a seconda della versione, qui uniformiamo)
+        const tokenIdStr = String(i);
+
+        const [ownerRes, listingRes, certRes] = await Promise.all([
+          FF.watchNft.query.ownerOf(roleUrl, { tokenId: tokenIdStr }),
+          // Proviamo con tokenId anche per listings, se fallisce FireFly restituirà errore ma almeno è consistente
+          // Se listings era una MAPPING pubblica, a volte FireFly vuole key vuota, ma se è una funzione vuole tokenId.
+          // Dato che non abbiamo errore su listings negli screen, presumiamo funzioni o sia gestito.
+          // Se listings fallisce, prova a rimettere { "": tokenIdStr } SOLO per listings.
+          FF.watchMarket.query.listings(roleUrl, { "": tokenIdStr }), 
+          
+          // FIX QUI: Era { "": ... }, deve essere { tokenId: ... }
+          FF.watchNft.query.certified(roleUrl, { tokenId: tokenIdStr }) 
+        ]);
+        
+        const ownerAddr = String(ownerRes.output).toLowerCase();
+        
+        // Gestione risposta FireFly listing
+        const listing = listingRes.output || listingRes;
+        
+        // Gestione certificazione (bool)
+        const isCertified = !!(certRes.output === true || certRes.output === "true" || certRes === true);
+
+        // --- GHOST LISTING CHECK ---
+        let sellerAddr = null;
+        let priceLux = null;
+        let isListed = false;
+
+        if (listing && listing.seller) {
+           const rawSeller = String(listing.seller).toLowerCase();
+           if (rawSeller !== ZERO_ADDR) {
+              sellerAddr = rawSeller;
+              priceLux = formatLux(listing.price);
+              isListed = true;
+           }
+        }
+        
+        const myAddr = address.toLowerCase();
+
+        // Se l'orologio è mio (lo possiedo o lo sto vendendo io)
+        if (ownerAddr === myAddr || sellerAddr === myAddr) {
+          myWatches.push({
+            tokenId: tokenIdStr,
+            owner: ownerAddr,
+            
+            seller: sellerAddr, 
+            price: isListed ? listing.price : null,
+            priceLux: priceLux, 
+            
+            certified: isCertified, 
+            
+            isMineOwner: ownerAddr === myAddr,
+            isMineSeller: sellerAddr === myAddr,
+          });
+        }
+      }
+      setInventory(myWatches);
     } catch (e) {
-      console.error("Inventory error:", e);
+      console.error("Errore recupero inventario:", e);
     } finally {
       if (!silent) setLoadingInventory(false);
     }
-  }, [address]);
+  }, [address, role]);
+
+
 
   // --- EFFETTI ---
   useEffect(() => {
@@ -117,93 +163,158 @@ export default function MePage() {
   const openError = (msg) => setModals(p => ({ ...p, error: msg, confirm: null }));
   
   const ensureMarketApprovalThen = async (actionFn) => {
-    const res = await getApprovalStatus();
+    const roleUrl = getRoleBaseUrl(role);
+    const marketAddr = import.meta.env.VITE_WATCHMARKET_ADDRESS;
+    if (!marketAddr) throw new Error("Missing VITE_WATCHMARKET_ADDRESS in frontend/.env");
 
-    if (res?.isApproved) {
-      return await actionFn();
-    }
+    try {
+      const res = await FF.watchNft.query.isApprovedForAll(roleUrl, {
+        owner: address,
+        operator: marketAddr
+      });
+      
+      if (res.output === true) return await actionFn();
 
-    return new Promise((resolve, reject) => {
       openConfirm(
-        "Autorizzazione richiesta",
-        "Autorizzi il Market a gestire i tuoi NFT per le operazioni di vendita?",
+        "Autorizzazione NFT",
+        "Per mettere in vendita l'orologio, devi autorizzare il Market a gestire i tuoi NFT. Confermi?",
         async () => {
+          setBusy(true);
           try {
-            await approveMarket();
-            const out = await actionFn();
-            resolve(out);
+            await FF.watchNft.invoke.setApprovalForAll(roleUrl, {
+              operator: marketAddr,
+              approved: true
+            });
+            closeModals();
+            setTimeout(async () => await actionFn(), 2000); 
           } catch (e) {
-            reject(e);
+            handleError(e);
+          } finally {
+            setBusy(false);
           }
         }
       );
-    });
+    } catch (e) {
+      handleError(e);
+    }
   };
 
-  const handleError = (e) => {
-      const msg = formatError(e);
-      
-      if (msg.includes("paused") || msg.includes("emergency")) {
-        openError("Sistema in PAUSA. Operazione bloccata.");
-        return;
-      }
-
-      if (msg.includes("Only Reseller") || msg.includes("caller is not the reseller")) {
-        openError("Operazione riservata a Reseller autorizzati. Contattare il Producer.");
-        return;
-      }
-      openError(msg);
+  const handleError = (e, context = "GENERAL") => {
+        const msg = formatError(e, context); // Passiamo il contesto al formatter
+        openError(msg);
     };
 
   // --- AZIONI ---
-  const performAction = async (actionFn, successMsg) => {
-    setBusy(true);
-    try {
-      await actionFn();
-      openSuccess(successMsg);
-      refreshInventory(true);
-      await refreshWallet(); 
-    } catch (e) {
-      handleError(e);
-    } finally {
-      setBusy(false);
-    }
+  const performAction = async (actionFn, successMsg, context = "GENERAL") => { // Aggiungi param
+      setBusy(true);
+      try {
+        await actionFn();
+        openSuccess(successMsg);
+        refreshWallet();
+        refreshInventory(true); 
+      } catch (e) {
+        handleError(e, context); // Usa param qui
+      } finally {
+        setBusy(false);
+      }
   };
 
-  const handleMint = () => {
-    if (factoryPaused) {
-      openError("Produzione ferma: La Factory è in Pausa di Emergenza.");
-      return;
-    }
-    performAction(mintWatch, "Orologio creato con successo!");
-  };
+  const handleMint = async () => {
+      // Mint è un'azione di Produzione -> FACTORY
+      setBusy(true);
+      try {
+        const roleUrl = getRoleBaseUrl(role);
+        await FF.watchNft.invoke.manufacture(roleUrl, { to: address});
+        openSuccess("Orologio coniato con successo!");
+        refreshWallet();
+        refreshInventory(true);
+      } catch (e) {
+        handleError(e, "FACTORY"); // <--- QUI
+      } finally {
+        setBusy(false);
+      }
+    };;
   
 
-  const handleList = async (item, priceLux) => {
+  const handleList = async (item, priceLuxInput) => {
+    const roleUrl = getRoleBaseUrl(role);
+    
+    const priceInWei = parseLux(priceLuxInput);
+
     const runListingLogic = async () => {
       await performAction(async () => {
-          if (item.priceLux) await cancelListing(item.tokenId);
-            
-          if (role === "producer") {
-            await listPrimary(item.tokenId, priceLux);
-          } else {
-            await listSecondary(item.tokenId, priceLux);
+          if (item.priceLux) {
+            await FF.watchMarket.invoke.cancelListing(roleUrl, { tokenId: item.tokenId } );
           }
-      }, "Listato con successo!");
+          const method = (role === "producer") ? "listPrimary" : "listSecondary";
+          
+          await FF.watchMarket.invoke[method](roleUrl, {
+            tokenId: item.tokenId,
+            price: priceInWei 
+          }); 
+      }, "Orologio messo in vendita con successo!", "MARKET");
     };
     ensureMarketApprovalThen(runListingLogic);
   };
 
 
-  const handleCertify = (item) => performAction(() => certify(item.tokenId), `Orologio #${item.tokenId} certificato!`);
-  const handleCancel = (item) => performAction(() => cancelListing(item.tokenId), "Listing rimosso.");
-  const handleWithdraw = () => performAction(withdrawCredits, "Crediti prelevati con successo!");
-
-  const handleToggleSystem = async (endpoint, currentStatus) => {
-    try {
+  const handleCertify = async (item) => {
+      if (role !== "reseller") return openError("Solo Reseller...");
+      
       setBusy(true);
-      await apiPost(endpoint, { status: !currentStatus });
+      try {
+        const roleUrl = getRoleBaseUrl(role);
+        await FF.watchNft.invoke.certify(roleUrl, { tokenId: item.tokenId });
+        
+        openSuccess(`Certificato emesso per orologio #${item.tokenId}!`);
+        refreshInventory(true);
+      } catch (e) {
+        handleError(e, "FACTORY"); // <--- QUI
+      } finally {
+        setBusy(false);
+      }
+    };
+    
+  
+   
+  const handleCancel = async (item) => {
+    await performAction(async () => {
+      const roleUrl = getRoleBaseUrl(role);
+    
+      await FF.watchMarket.invoke.cancelListing(roleUrl, { 
+        tokenId: item.tokenId 
+      });
+      
+    }, "L'orologio è stato ritirato dal mercato e riportato nel tuo inventario.", "MARKET");
+  };
+  
+
+  const handleWithdraw = async () => {
+      setBusy(true);
+      try {
+        const roleUrl = getRoleBaseUrl(role);
+        await FF.watchMarket.invoke.withdraw(roleUrl, {});
+        openSuccess("LUX prelevati con successo!");
+        refreshWallet();
+      } catch (e) {
+        handleError(e, "MARKET"); // <--- QUI
+      } finally {
+        setBusy(false);
+      }
+    };
+
+  const handleToggleSystem = async (system, currentStatus) => {
+    setBusy(true);
+    try {
+      const roleUrl = getRoleBaseUrl(role);
+      const targetApi = (system === 'market') ? FF.watchMarket : FF.watchNft; 
+      
+      await targetApi.invoke.setEmergencyStop(roleUrl, {
+        status: !currentStatus 
+      }); 
+
       forceRefresh();
+      openSuccess(`Sistema ${system === 'market' ? 'Mercato' : 'Factory'} aggiornato!`);
       closeModals();
     } catch (e) {
       handleError(e);
@@ -249,7 +360,7 @@ export default function MePage() {
                   <div className="text-[#D4AF37] text-xs uppercase tracking-wider font-bold mb-1 flex items-center gap-1">
                     <BanknotesIcon className="h-4 w-4" /> Vendite da Incassare
                   </div>
-                  {/* FIX: Ora visualizza il valore formattato correttamente */}
+                  
                   <div className="text-white text-xl font-bold mb-3">
                      {formattedCredits} LUX 
                   </div>
@@ -301,7 +412,7 @@ export default function MePage() {
                {role === "producer" && (
                    <button 
                      onClick={() => openConfirm("Nuovo Orologio", "Vuoi coniare un nuovo orologio?", handleMint)}
-                     disabled={busy || factoryPaused}
+                     disabled={busy}
                      title="Conia Nuovo Orologio"
                      className="flex items-center gap-2 px-5 py-2.5 bg-[#4A0404] border border-[#D4AF37]/30 text-[#D4AF37] font-bold rounded-xl shadow-lg hover:bg-[#5e0a0a] hover:border-[#D4AF37] disabled:opacity-50 transition"
                    >
@@ -345,7 +456,7 @@ export default function MePage() {
         onCertify={(item) => openConfirm("Certificazione", "Emettere certificato di autenticità?", () => handleCertify(item))}
       />
       
-      <SecurityModal isOpen={modals.security} onClose={() => setModals(p => ({...p, security: false}))} marketPaused={marketPaused} factoryPaused={factoryPaused} busy={busy} onToggleMarket={() => openConfirm("Sicurezza Market", `Cambiare stato Market?`, () => handleToggleSystem("/market/emergency", marketPaused))} onToggleFactory={() => openConfirm("Sicurezza Factory", `Cambiare stato Factory?`, () => handleToggleSystem("/inventory/emergency", factoryPaused))} />
+      <SecurityModal isOpen={modals.security} onClose={() => setModals(p => ({...p, security: false}))} marketPaused={marketPaused} factoryPaused={factoryPaused} busy={busy} onToggleMarket={() => handleToggleSystem("market", marketPaused)} onToggleFactory={() => handleToggleSystem("factory", factoryPaused)} />
       <ResellerModal isOpen={modals.reseller} onClose={() => setModals(p => ({...p, reseller: false}))} />
       <ConfirmModal isOpen={!!modals.confirm} title={modals.confirm?.title} message={modals.confirm?.message} onConfirm={modals.confirm?.onConfirm} onClose={closeModals} busy={busy} />
       <SuccessModal isOpen={!!modals.success} message={modals.success} onClose={closeModals} />

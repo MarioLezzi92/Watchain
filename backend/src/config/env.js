@@ -1,45 +1,27 @@
 import dotenv from "dotenv";
-import path from "path";
-import { fileURLToPath } from "url";
+dotenv.config();
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-// 1. Caricamento .env
-const envPath = path.join(__dirname, "../../.env");
-dotenv.config({ path: envPath });
-
-// 2. Funzione di Validazione 
-function requireEnv(key, fallback = null) {
-  const value = process.env[key];
-  if (!value && fallback === null) {
-    console.error(`[FATAL ERROR] Manca la variabile d'ambiente obbligatoria: ${key}`);
-    console.error(`Verifica il file: ${envPath}`);
-    process.exit(1); 
-  }
-  return value || fallback;
+function must(name) {
+  const v = process.env[name];
+  if (!v) throw new Error(`Missing env var: ${name}`);
+  return v;
 }
 
-// 3. Export Configurazione Validata
-export const config = {
-  // Server
-  port: requireEnv("PORT", "3001"),
-  jwtSecret: requireEnv("JWT_SECRET"),
-  webhookSecret: requireEnv("WEBHOOK_SECRET"),
-  frontendOrigin: requireEnv("FRONTEND_ORIGIN", "*"),
-  
-  // FireFly Nodes 
-  producerBase: requireEnv("FF_PRODUCER_BASE"),
-  resellerBase: requireEnv("FF_RESELLER_BASE"),
-  consumerBase: requireEnv("FF_CONSUMER_BASE"),
+export const env = {
+  // sensibili
+  JWT_SECRET: must("JWT_SECRET"),
+  WEBHOOK_SECRET: must("WEBHOOK_SECRET"),
 
-  // Smart Contracts
-  luxuryCoinAddress: requireEnv("LUXURYCOIN_ADDRESS"),
-  watchNFTAddress: requireEnv("WATCHNFT_ADDRESS"),
-  watchMarketAddress: requireEnv("WATCHMARKET_ADDRESS"),
+  // non sensibili: hardcoded per ordine (come vuoi tu)
+  PORT: 3001,
+  FRONTEND_ORIGIN: "http://localhost:5173",
 
-  // Whitelisted Addresses
-  producerAddr: requireEnv("PRODUCER_ADDR"),
-  resellerAddr: requireEnv("RESELLER_ADDR"),
-  consumerAddr: requireEnv("CONSUMER_ADDR"),
+  // policy: hardcoded
+  JWT_TTL: "1h",
+  NONCE_TTL_MS: 5 * 60 * 1000, // 5 minuti
+
+  // ruoli (whitelist)
+  PRODUCER_ADDR: must("PRODUCER_ADDR"),
+  RESELLER_ADDR: must("RESELLER_ADDR"),
+  CONSUMER_ADDR: must("CONSUMER_ADDR"),
 };

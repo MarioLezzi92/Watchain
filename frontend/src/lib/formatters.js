@@ -1,16 +1,19 @@
 import { ethers } from "ethers";
 
+// COSTANTE: 1 LUX = 10^18 unità base
+const DECIMALS = 1000000000000000000n; // 18 zeri
+
 /**
- * Formatta Wei in LUX (per la visualizzazione).
+ * Dalla Blockchain al Frontend (Visualizzazione)
+ * Divide per 10^18 e restituisce solo la parte intera.
+ * Es: 15000000000000000000 Wei -> "15" LUX
  */
 export function formatLux(weiValue) {
   try {
     if (!weiValue) return "0";
-    const sVal = String(weiValue);
-    if (sVal === "0") return "0";
-
-    const formatted = ethers.formatEther(sVal);
-    return formatted.split(".")[0]; 
+    // Divisione intera BigInt: taglia via qualsiasi decimale
+    const lux = BigInt(weiValue) / DECIMALS;
+    return lux.toString(); 
   } catch (e) {
     console.error("Format Error:", e);
     return "0";
@@ -18,58 +21,56 @@ export function formatLux(weiValue) {
 }
 
 /**
- * Converte LUX in Wei (per inviare alla Blockchain).
+ * Dal Frontend alla Blockchain (Input)
+ * Moltiplica l'input utente per 10^18.
+ * Es: "15" LUX -> 15000000000000000000 Wei
  */
 export function parseLux(luxValue) {
   try {
     if (!luxValue) return "0";
-    return ethers.parseEther(String(luxValue)).toString();
+    // Moltiplicazione BigInt
+    const wei = BigInt(luxValue) * DECIMALS;
+    return wei.toString();
   } catch (e) {
     console.error("Parse Error:", e);
     return "0";
   }
 }
 
-/**
- * Abbrevia gli indirizzi Ethereum
- */
 export function shortAddr(address) {
   const s = String(address || "");
   if (s.length <= 12) return s; 
   return `${s.slice(0, 6)}…${s.slice(-4)}`;
 }
 
-/**
- * Gestione Errori Centralizzata per la UI.
- */
-export function formatError(error) {
+export function formatError(error, context = "GENERAL") {
   if (!error) return "Errore sconosciuto";
-  if (typeof error === "string") return error;
+  
+  const msg = (error.message || String(error)).toLowerCase();
 
-  const msg = error.message || String(error);
-  
-  // 1. Convertiamo in minuscolo UNA VOLTA sola per fare confronti sicuri
-  const lowerMsg = msg.toLowerCase(); 
-
-  // Mappatura errori comuni (UX Friendly)
-  if (lowerMsg.includes("user denied")) {
-      return "Operazione annullata dall'utente.";
-  }
-  if (lowerMsg.includes("rejected")) {
-      return "Transazione rifiutata dal wallet.";
-  }
-  if (lowerMsg.includes("insufficient funds")) {
-      return "Fondi insufficienti per coprire il costo.";
-  }
-  
-  // CORREZIONE QUI: Cerchiamo la stringa tutta in minuscolo
-  if (lowerMsg.includes("only active reseller") || lowerMsg.includes("caller is not the reseller")) {
-      return "Operazione riservata a Reseller autorizzati. Contattare il Producer.";
-  }
-  
-  if (lowerMsg.includes("paused")) {
-      return "Sistema in manutenzione. Operazione non consentita al momento.";
+  // 1. GESTIONE PAUSA (Differenziata per contesto)
+  if (msg.includes("paused") || msg.includes("emergency")) {
+    if (context === "MARKET") {
+      return "MERCATO SOSPESO: Le operazioni di acquisto, vendita e prelievo sono momentaneamente bloccate.";
+    }
+    if (context === "FACTORY") {
+      return "PRODUZIONE SOSPESA: Il minting e le certificazioni non sono disponibili al momento.";
+    }
+    // Fallback se non specifichiamo il contesto (o blocco totale)
+    return "SISTEMA IN MANUTENZIONE: Tutte le operazioni sono temporaneamente sospese.";
   }
 
-  return msg;
+  // 2. ERRORI SPECIFICI ESISTENTI
+  if (msg.includes("user denied")) return "Operazione annullata dall'utente.";
+  
+  if (msg.includes("only active reseller")) {
+    return "ACCESSO NEGATO: Operazione riservata ai Rivenditori Autorizzati.";
+  }
+
+  if (msg.includes("insufficient funds") || msg.includes("0xe450d38")) {
+    return "SALDO INSUFFICIENTE: Non hai abbastanza LUX per questa operazione.";
+  }
+
+  // Fallback generico
+  return error.message || String(error);
 }

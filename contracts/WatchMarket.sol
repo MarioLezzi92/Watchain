@@ -37,6 +37,7 @@ contract WatchMarket is Ownable, ReentrancyGuard, EmergencyStop, PullPayments {
         Ownable(msg.sender)
         PullPayments(paymentToken_)
     {
+        require(address(paymentToken_) != address(0), "Invalid payment token");
         require(watchNftAddress_ != address(0), "Invalid NFT address");
         watch = WatchNFT(watchNftAddress_); // Casting al contratto concreto
     }

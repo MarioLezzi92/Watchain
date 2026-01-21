@@ -1,8 +1,7 @@
-import express from "express";
-import { handleFireFlyWebhook } from "../controllers/eventsController.js";
+import { Router } from "express";
+import { fireflyWebhook } from "../controllers/eventsController.js";
 
-const router = express.Router();
-
-router.post("/firefly-webhook", handleFireFlyWebhook);
+const router = Router();
+router.post("/webhook", fireflyWebhook);
 
 export default router;

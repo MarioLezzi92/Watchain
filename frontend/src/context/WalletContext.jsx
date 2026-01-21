@@ -1,107 +1,144 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from "react";
-// 1. Importiamo le astrazioni da auth.js (Niente più localStorage diretto!)
-import { getAddress, getRole } from "../lib/auth";
-import { apiGet } from "../lib/api";
-import { getBalance } from "../services/walletService";
-import { getCredits } from "../services/marketService";
+import { getAddress, getRole, logout } from "../lib/auth"; 
+import { FF, FF_BASE } from "../lib/api";
 
-/**
- * Centralizza tutti i dati personali dell'utente connesso:
- * - Chi è (Address, Ruolo) -> Presi da auth.js
- * - Cosa possiede (Inventario) -> API /inventory
- * - Quanto ha (Saldo, Crediti) -> API /wallet, /market
- */
 const WalletContext = createContext();
+
+// Helper per gestire i BigInt 
+const safeBigInt = (val) => { 
+  try { 
+    return val != null ? BigInt(val) : 0n; 
+  } catch { 
+    return 0n; 
+  } 
+};
 
 export function WalletProvider({ children }) {
   const [address, setAddress] = useState(null);
   const [role, setRole] = useState(null);
-  
-  const [balance, setBalance] = useState("0");           // Saldo LUX
-  const [pendingBalance, setPendingBalance] = useState("0"); // Crediti da incassare (Wei)
-  
+  const [balance, setBalance] = useState("0");          
+  const [pendingBalance, setPendingBalance] = useState("0"); 
   const [inventory, setInventory] = useState([]);
   const [loading, setLoading] = useState(true);
 
+  // --- 1. SYNC DATI ---
   const refreshWallet = useCallback(async () => {
+    const storedAddress = getAddress();
+    const storedRole = getRole();
+
+    if (!storedAddress || storedAddress === "undefined") {
+      setAddress(null);
+      setRole(null);
+      setBalance("0");
+      setPendingBalance("0");
+      setInventory([]);
+      setLoading(false);
+      return;
+    }
+
+    setAddress(storedAddress);
+    setRole(storedRole);
+
+    const roleUrl = FF_BASE[storedRole] || FF_BASE.consumer;
+
     try {
-      // 2. USIAMO I GETTERS SICURI
-      const storedAddress = getAddress();
-      const storedRole = getRole();
+      const [balRes, credRes, nextIdRes] = await Promise.allSettled([
+        FF.luxuryCoin.query.balanceOf(roleUrl, { account: storedAddress }),
+        FF.watchMarket.query.creditsOf(roleUrl, { payee: storedAddress }),
+        FF.watchNft.query.nextId(roleUrl)
+      ]);
 
-      if (storedAddress) {
-        setAddress(storedAddress);
-        setRole(storedRole);
-
-        // --- A. SALDO & CREDITI (Parallelizziamo per velocità) ---
-        // Eseguiamo le chiamate in parallelo invece che una dopo l'altra
-        const [balRes, credRes, invRes] = await Promise.allSettled([
-            getBalance(),
-            getCredits(),
-            apiGet("/inventory")
-        ]);
-
-        // Gestione Saldo
-        if (balRes.status === "fulfilled" && balRes.value) {
-            const rawBalance = String(balRes.value.lux ?? "0");
-            setBalance(rawBalance.split('.')[0]);
-        } else {
-            // Se fallisce (es. backend offline), mettiamo 0 ma non rompiamo tutto
-            console.warn("Impossibile recuperare saldo:", balRes.reason);
-            setBalance("0");
-        }
-
-        // Gestione Crediti
-        if (credRes.status === "fulfilled" && credRes.value) {
-            setPendingBalance(String(credRes.value.creditsWei || "0"));
-        } else {
-            setPendingBalance("0");
-        }
-
-        // Gestione Inventario
-        if (invRes.status === "fulfilled" && Array.isArray(invRes.value)) {
-            setInventory(invRes.value);
-        } else {
-            setInventory([]);
-        }
-
+      if (balRes.status === "fulfilled") {
+        const lux = (safeBigInt(balRes.value.output) / 10n**18n).toString();
+        setBalance(lux);
       } else {
-        // Nessun utente loggato -> Reset totale
-        setAddress(null);
-        setRole(null);
         setBalance("0");
+      }
+
+      if (credRes.status === "fulfilled") {
+        setPendingBalance(String(credRes.value.output || "0"));
+      } else {
         setPendingBalance("0");
+      }
+
+      if (nextIdRes.status === "fulfilled") {
+        const totalNFTs = Number(nextIdRes.value.output);
+        let myWatches = [];
+        const ownerPromises = [];
+        for (let i = 1; i <= totalNFTs; i++) {
+          ownerPromises.push(FF.watchNft.query.ownerOf(roleUrl, { tokenId: String(i) }));
+        }
+
+        const owners = await Promise.allSettled(ownerPromises);
+        owners.forEach((res, index) => {
+          if (res.status === "fulfilled") {
+            const ownerAddr = String(res.value.output).toLowerCase();
+            if (ownerAddr === storedAddress.toLowerCase()) {
+              myWatches.push({ 
+                tokenId: index + 1, 
+                owner: ownerAddr 
+              });
+            }
+          }
+        });
+        setInventory(myWatches);
+      } else {
         setInventory([]);
       }
+
     } catch (error) {
-      console.error("Critical Wallet Error:", error);
+      console.error("Critical Wallet Sync Error:", error);
     } finally {
       setLoading(false);
     }
   }, []);
 
-  // Aggiorna al mount e quando cambia la funzione refresh
+  // --- 2. SECURITY: AUTO-LOGOUT SU CAMBIO ACCOUNT (NUOVO) ---
+  useEffect(() => {
+    if (window.ethereum) {
+      const handleAccountsChanged = (accounts) => {
+        const currentSessionAddr = getAddress();
+        
+        // Se non ci sono account o l'account attivo è diverso da quello in sessione
+        if (accounts.length === 0 || (currentSessionAddr && accounts[0].toLowerCase() !== currentSessionAddr.toLowerCase())) {
+          console.warn("⚠️ Cambio account rilevato. Logout forzato.");
+          logout(); // Pulisce localStorage
+          window.location.href = "/login"; // Ti rispedisce al login
+        }
+      };
+
+      const handleChainChanged = () => {
+        window.location.reload(); 
+      };
+
+      window.ethereum.on("accountsChanged", handleAccountsChanged);
+      window.ethereum.on("chainChanged", handleChainChanged);
+
+      return () => {
+        window.ethereum.removeListener("accountsChanged", handleAccountsChanged);
+        window.ethereum.removeListener("chainChanged", handleChainChanged);
+      };
+    }
+  }, []);
+
+  // Sync iniziale
   useEffect(() => {
     refreshWallet();
   }, [refreshWallet]);
 
   return (
-    <WalletContext.Provider
-      value={{
-        address,
-        role,
-        balance,         
-        pendingBalance,  
-        inventory,
-        loading,
-        refreshWallet,
-      }}
-    >
+    <WalletContext.Provider value={{
+      address,
+      role,
+      balance,
+      pendingBalance,
+      inventory,
+      loading,
+      refreshWallet 
+    }}>
       {children}
     </WalletContext.Provider>
   );
 }
 
-export function useWallet() {
-  return useContext(WalletContext);
-}
+export const useWallet = () => useContext(WalletContext);

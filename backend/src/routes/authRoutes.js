@@ -1,13 +1,18 @@
-import express from "express";
-import * as authController from "../controllers/authController.js";
+import { Router } from "express";
+import { getNonce, login, logout, checkReseller } from "../controllers/authController.js";
+import { requireAuth } from "../middlewares/authMiddleware.js";
 
-const router = express.Router();
+const router = Router();
 
-// Public Routes
-router.get("/nonce", authController.getNonce);
-router.get("/config", authController.getConfig);
+router.get("/nonce", getNonce);
+router.post("/login", login);
+router.post("/logout", logout);
 
-router.post("/login", authController.login);
-router.post("/logout", authController.logout);
+// Nuova rotta per il controllo stato
+router.post("/check-reseller", checkReseller);
+
+router.get("/me", requireAuth, (req, res) => {
+  res.json({ success: true, ...req.user });
+});
 
 export default router;

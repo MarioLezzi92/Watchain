@@ -1,23 +1,38 @@
 import React, { useState, useEffect } from "react";
 import AppShell from "../app/AppShell";
-import { getBalance } from "../services/walletService";
-import { getActiveListings, buyItem, cancelListing } from "../services/marketService"; 
 import WatchCard from "../components/domain/WatchCard";
 import WatchDetailsModal from "../components/domain/WatchDetailsModal";
 import ConfirmModal from "../components/ui/ConfirmModal"; 
 import SuccessModal from "../components/ui/SuccessModal"; 
 import ErrorModal from "../components/ui/ErrorModal";
-import { ArrowPathIcon, ExclamationCircleIcon } from "@heroicons/react/24/outline"; // Aggiunta icona per empty state
+import { ArrowPathIcon, ExclamationCircleIcon } from "@heroicons/react/24/outline"; 
 import { useSystem } from "../context/SystemContext";
-import { apiGet, apiPost } from "../lib/api";
 import { useWallet } from "../context/WalletContext";
-import { formatError } from "../lib/formatters";
+import { formatError, formatLux } from "../lib/formatters"; 
 
+import { FF, FF_BASE } from "../lib/api";
 
-const safeBigInt = (val) => { try { return BigInt(val); } catch { return 0n; } };
+const getRoleBaseUrl = (role) => {
+  if (role === 'producer') return FF_BASE.producer;
+  if (role === 'reseller') return FF_BASE.reseller;
+  return FF_BASE.consumer;
+};
+
+// Helper per BigInt
+const safeBigInt = (val) => { 
+  try { 
+    return val != null ? BigInt(val) : 0n; 
+  } catch { 
+    return 0n; 
+  } 
+};
+
+const MAX_APPROVAL = "115792089237316195423570985008687907853269984665640564039457584007913129639935";
+const ZERO_ADDR = "0x0000000000000000000000000000000000000000";
 
 export default function MarketPage() {
-  const { address, role } = useWallet();
+  
+  const { address, role, refreshWallet } = useWallet();
   const [viewMode, setViewMode] = useState('PRIMARY'); 
   const [balanceLux, setBalanceLux] = useState("-");
   const [listings, setListings] = useState([]);
@@ -28,31 +43,6 @@ export default function MarketPage() {
   const [confirmModal, setConfirmModal] = useState({ isOpen: false, title: "", message: "", onConfirm: null });
   const [successModal, setSuccessModal] = useState({ isOpen: false, message: "" });
   const [errorModal, setErrorModal] = useState({ isOpen: false, message: "" });
-
-  const refreshBalance = async () => {
-    if (!address) return;
-    try { const b = await getBalance(); setBalanceLux(String(b?.lux ?? "-")); } catch {}
-  };
-
-  const refreshListings = async (silent = true) => {
-    if (!silent) setLoading(true);
-    try {
-      const allListings = await getActiveListings();
-      const filtered = allListings.filter(item => {
-        const sType = String(item.saleType).toUpperCase();
-        return viewMode === 'PRIMARY' ? sType === 'PRIMARY' : (sType === 'SECONDARY' && item.certified === true);
-      });
-      const normalized = filtered.map(item => ({
-          ...item,
-          priceLux: (safeBigInt(item.price) / 10n**18n).toString()
-      }));
-      setListings(normalized);
-    } catch (e) {
-      if (!silent) setErrorModal({ isOpen: true, message: formatError(e) });
-    } finally {
-      if (!silent) setLoading(false);
-    }
-  };
 
   const { refreshTrigger } = useSystem();
 
@@ -73,21 +63,81 @@ export default function MarketPage() {
     }
   }, [refreshTrigger]);
 
+
+  const refreshBalance = async () => {
+    if (!address || !role) return;
+    try {
+      const roleUrl = getRoleBaseUrl(role);
+      const res = await FF.luxuryCoin.query.balanceOf(roleUrl, { account: address });       
+      setBalanceLux(formatLux(res?.output || "0"));
+    } catch (error) {
+      console.error("ERROR BALANCE: ", error);
+    }
+  };
+
+  const refreshListings = async (silent = true) => {
+    if (!silent) setLoading(true);
+    try {
+      const roleUrl = getRoleBaseUrl(role);
+      
+      const nextIdRes = await FF.watchNft.query.nextId(roleUrl);
+      const total = Number(nextIdRes.output);
+
+      let active = [];
+      
+      for (let i = 1; i <= total; i++) {
+        const res = await FF.watchMarket.query.listings(roleUrl, { "": String(i) });
+        const item = res.output || res; 
+
+        if (!item) continue;
+
+        const seller = String(item.seller || "").toLowerCase();
+        
+        if (seller && seller !== ZERO_ADDR) {
+          active.push({ ...item, tokenId: i, seller });
+        }
+      }
+
+      const filtered = active.filter(item => {
+        const saleTypeStr = String(item.saleType); 
+        const isPrimary = saleTypeStr === "0";
+        return viewMode === 'PRIMARY' ? isPrimary : !isPrimary;
+      });
+
+      const normalized = filtered.map(item => ({
+          ...item,
+          priceLux: formatLux(item.price)
+      }));
+      
+      setListings(normalized);
+    } catch (e) {
+      console.error("Listing Error:", e);
+      if (!silent) setErrorModal({ isOpen: true, message: formatError(e) });
+    } finally {
+      if (!silent) setLoading(false);
+    }
+  };
+
   // --- AZIONI ---
 
   const handleCancelClick = (item) => {
     setConfirmModal({
       isOpen: true,
       title: "Ritira Orologio",
-      message: "Vuoi annullare la vendita?", 
+      message: `Vuoi annullare la vendita dell'orologio #${item.tokenId}?`, 
       onConfirm: async () => {
         setBusy(true);
         try {
-          await cancelListing(item.tokenId);
+          const roleBaseUrl = getRoleBaseUrl(role);
+          await FF.watchMarket.invoke.cancelListing(roleBaseUrl, { tokenId: item.tokenId });
+
           setSelected(null);
           setSuccessModal({ isOpen: true, message: "Listing rimosso." });
+          refreshListings(false);
+          refreshBalance();
+          refreshWallet();
         } catch (e) {
-          setErrorModal({ isOpen: true, message: formatError(e) });
+          setErrorModal({ isOpen: true, message: formatError(e, "MARKET") });
         } finally {
           setBusy(false);
           setConfirmModal(p => ({ ...p, isOpen: false }));
@@ -98,37 +148,75 @@ export default function MarketPage() {
 
   const ensureLuxApprovalThen = async (priceWei, actionFn) => {
     try {
-      const res = await apiGet("/market/allowance");
-      if (safeBigInt(res?.allowance) >= safeBigInt(priceWei)) return await actionFn();
+      const roleUrl = getRoleBaseUrl(role);
+      const marketAddr = import.meta.env.VITE_WATCHMARKET_ADDRESS;
 
+      // 1. Controlliamo l'Allowance attuale
+      const allowanceRes = await FF.luxuryCoin.query.allowance(roleUrl, {
+        owner: address,
+        spender: marketAddr
+      });
+      
+      const val = allowanceRes?.output || allowanceRes?.allowance || "0";
+      const currentAllowance = safeBigInt(val);
+      const requiredPrice = safeBigInt(priceWei || "0");
+
+      // Se l'allowance è sufficiente (es. è già infinita), procediamo subito
+      if (currentAllowance >= requiredPrice) return await actionFn();
+
+      // Altrimenti chiediamo l'approvazione (UNA TANTUM)
       setConfirmModal({
         isOpen: true,
         title: "Autorizzazione LUX",
-        message: "Devi autorizzare il mercato a prelevare i tuoi LUX per procedere.",
+        message: "Per procedere, devi autorizzare il Market a gestire i tuoi LUX. Questa operazione va fatta una volta sola.",
         onConfirm: async () => {
           setBusy(true);
           try {
-            await apiPost("/market/approve-lux");
+            // FIX: Usiamo MAX_APPROVAL e il parametro 'value'
+            await FF.luxuryCoin.invoke.approve(roleUrl, {
+              spender: marketAddr,
+              value: MAX_APPROVAL 
+            });
+
             setConfirmModal(p => ({ ...p, isOpen: false }));
-            await actionFn();
-          } catch (e) { setErrorModal({ isOpen: true, message: formatError(e) }); }
-          finally { setBusy(false); }
+            
+            // Pausa per dare tempo alla blockchain di registrare l'approvazione
+            setTimeout(async () => await actionFn(), 2000);
+          } catch (e) { 
+            console.error(e);
+            setErrorModal({ isOpen: true, message: formatError(e) }); 
+          } finally { 
+            setBusy(false); 
+          }
         }
       });
-    } catch (e) { setErrorModal({ isOpen: true, message: "Errore autorizzazioni." }); }
+    } catch (e) { 
+        console.error(e);
+        setErrorModal({ isOpen: true, message: "Errore controllo autorizzazioni LUX." }); 
+    }
   };
 
   const performBuy = async (item) => {
-    setBusy(true);
-    try {
-      await buyItem(role, address, item.tokenId);
-      setSelected(null);
-      setConfirmModal(p => ({ ...p, isOpen: false }));
-      setSuccessModal({ isOpen: true, message: "Acquisto completato!" });
-    } catch (e) {
-      setErrorModal({ isOpen: true, message: formatError(e) });
-    } finally { setBusy(false); }
-  };
+      setBusy(true);
+      try {
+        const roleBaseUrl = getRoleBaseUrl(role); 
+        await FF.watchMarket.invoke.buy(roleBaseUrl, { tokenId: item.tokenId });
+        
+        setSuccessModal({ isOpen: true, message: `Acquisto orologio #${item.tokenId} completato!` });
+        
+        setSelected(null); 
+        setConfirmModal(p => ({ ...p, isOpen: false })); 
+        
+        refreshListings(false); 
+        refreshBalance();       
+        refreshWallet();        
+
+      } catch (e) {
+        setErrorModal({ isOpen: true, message: formatError(e, "MARKET") });
+      } finally { 
+        setBusy(false); 
+      }
+    };
 
   const handleBuyClick = (item) => {
     if (!address) { window.location.href = "/login"; return; }
@@ -181,7 +269,6 @@ export default function MarketPage() {
         </div>
 
         {listings.length === 0 ? (
-          // FIX: Allineamento a sinistra (text-left) e struttura più pulita per evitare che sembri tutto centrato
           <div className="w-full text-left py-12 text-gray-400 italic flex items-start gap-2">
             <ExclamationCircleIcon className="h-6 w-6 text-gray-300" />
             <span>Nessun orologio disponibile in questa sezione al momento.</span>

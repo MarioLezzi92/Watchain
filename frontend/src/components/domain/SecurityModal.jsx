@@ -1,8 +1,26 @@
-import React from "react";
+import React, { useState, useEffect } from "react";
 import { XCircleIcon } from "@heroicons/react/24/outline";
 
 export default function SecurityModal({ isOpen, onClose, marketPaused, factoryPaused, onToggleMarket, onToggleFactory, busy }) {
+  // Stato locale per ricordare QUALE bottone è stato premuto
+  const [target, setTarget] = useState(null); 
+
+  // Quando l'operazione finisce (busy torna false), resettiamo il target
+  useEffect(() => {
+    if (!busy) setTarget(null);
+  }, [busy]);
+
   if (!isOpen) return null;
+
+  const handleToggleMarket = () => {
+    setTarget('market');
+    onToggleMarket();
+  };
+
+  const handleToggleFactory = () => {
+    setTarget('factory');
+    onToggleFactory();
+  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in duration-200">
@@ -32,15 +50,20 @@ export default function SecurityModal({ isOpen, onClose, marketPaused, factoryPa
             title="Produzione & Certificazioni"
             description="Controlla Minting e Certificazioni."
             isPaused={factoryPaused}
-            loading={busy}
-            onToggle={onToggleFactory}
+            // Mostra loading SOLO se siamo busy E il target è 'factory'
+            loading={busy && target === 'factory'}
+            // Disabilita se siamo busy (qualsiasi target)
+            disabled={busy}
+            onToggle={handleToggleFactory}
           />
           <SecurityCard 
             title="Marketplace"
             description="Controlla Vendite e Acquisti"
             isPaused={marketPaused}
-            loading={busy}
-            onToggle={onToggleMarket}
+            // Mostra loading SOLO se siamo busy E il target è 'market'
+            loading={busy && target === 'market'}
+            disabled={busy}
+            onToggle={handleToggleMarket}
           />
         </div>
       </div>
@@ -48,7 +71,7 @@ export default function SecurityModal({ isOpen, onClose, marketPaused, factoryPa
   );
 }
 
-function SecurityCard({ title, description, isPaused, loading, onToggle }) {
+function SecurityCard({ title, description, isPaused, loading, disabled, onToggle }) {
   const statusColor = isPaused ? "text-red-500" : "text-green-500";
   const statusText = isPaused ? "SISTEMA BLOCCATO" : "OPERATIVO";
   const bgStatus = isPaused ? "bg-red-500/10 border-red-500/20" : "bg-green-500/10 border-green-500/20";
@@ -65,12 +88,12 @@ function SecurityCard({ title, description, isPaused, loading, onToggle }) {
       </div>
       <button
         onClick={onToggle}
-        disabled={loading}
+        disabled={disabled} // Usa la prop disabled generica
         className={`relative w-full py-3 rounded-xl font-bold text-sm shadow-inner border border-white/5 transition-colors ${
           !isPaused 
             ? "bg-[#1A472A] text-green-100 hover:bg-[#143620]" 
             : "bg-red-900 text-red-100 hover:bg-red-800"
-        }`}
+        } disabled:opacity-50 disabled:cursor-not-allowed`}
       >
         {loading ? "Elaborazione..." : (isPaused ? "RIATTIVA SISTEMA" : "BLOCCA SISTEMA")}
       </button>

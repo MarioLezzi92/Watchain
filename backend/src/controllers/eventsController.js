@@ -1,59 +1,36 @@
-import { unwrapFFOutput } from "../utils/formatters.js";
-import { config } from "../config/env.js";
-/**
- * GESTORE WEBHOOK (Blockchain -> Backend -> Frontend)
- * * Quando FireFly rileva un evento sulla blockchain (es. "Sold", "Certified"),
- * chiama questo endpoint. Viene passato al frontend via WebSocket.
- */
+import { env } from "../config/env.js"; 
+import { unwrapFF } from "../utils/formatters.js";
 
-
-
-export const handleFireFlyWebhook = (req, res) => {
-  
+export function fireflyWebhook(req, res) {
   try {
-    
-    const incomingSecret = req.headers["x-watchchain-secret"];
-    if (incomingSecret !== config.webhookSecret) {
-      console.warn(" Webhook ricevuto con secret non valido:", incomingSecret);
-      return res.status(403).json({ error: "Forbidden" });
+    // Protezione semplice via shared secret (header scelto da te)
+    const incoming = req.headers["x-watchchain-secret"];
+    if (incoming !== env.WEBHOOK_SECRET) {
+      return res.status(403).json({ ack: false, error: "Forbidden" });
     }
 
-  
-    //  ACK IMMEDIATO a FireFly per evitare che riprovi all'infinito.
+    // ACK subito
     res.status(200).json({ ack: true });
 
-    const body = req.body;
-    
-    console.log(" Webhook ricevuto da FireFly!");
+    const body = req.body || {};
+    const be = body.blockchainEvent || {};
+    const name = be.name;
+    if (!name) return;
 
-    
-    const blockchainEvent = body.blockchainEvent || {};
-    const eventName = blockchainEvent.name; // Es: "Listed", "Purchased", "Canceled"
-    const output = blockchainEvent.output || {};
-
-    if (!eventName) {
-      console.log(" Evento senza nome, ignorato.");
-      return;
-    }
-
-    //  PULIZIA DATI: Togle i wrapper tecnici di FireFly per avere un JSON pulito.
-    const cleanData = {
-      tokenId: unwrapFFOutput(output.tokenId),
-      price: output.price ? unwrapFFOutput(output.price) : null,
-      seller: output.seller ? unwrapFFOutput(output.seller) : null,
-      buyer: output.buyer ? unwrapFFOutput(output.buyer) : null,
-      eventType: eventName // Passa il tipo così il frontend sa che fare
+    const out = be.output || {};
+    const data = {
+      eventType: name,
+      tokenId: unwrapFF(out.tokenId),
+      price: unwrapFF(out.price),
+      seller: unwrapFF(out.seller),
+      buyer: unwrapFF(out.buyer),
+      raw: body,
     };
 
-    console.log(` Evento processato: ${eventName} -> Token #${cleanData.tokenId}`);
-
-    // BROADCAST: Invia il messaggio a TUTTI i client connessi al sito.
+    // Push live
     const io = req.app.get("io");
-    
-    // Emette un messaggio globale su un canale unico
-    io.emit("market-update", cleanData);
-
-  } catch (err) {
-    console.error(" Errore critico nel Webhook:", err);
+    if (io) io.emit("market-update", data);
+  } catch (e) {
+    console.error("Webhook error:", e);
   }
-};
+}

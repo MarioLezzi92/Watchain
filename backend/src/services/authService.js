@@ -1,99 +1,128 @@
 import crypto from "crypto";
 import { ethers } from "ethers";
-import { config } from "../config/env.js";
+import { env } from "../config/env.js";
 import { signJwt } from "../utils/jwt.js";
 
-/**
- * AUTH SERVICE
- * Gestisce la crittografia, la verifica delle firme digitali e i JWT.
- * Implementa protezione contro Memory Leaks sui nonce.
- */
+// URL del nodo FireFly
+const FF_NODE = "http://127.0.0.1:5000"; 
 
-// Storage temporaneo dei nonce (Address -> { nonce, exp })
 const nonces = new Map();
-const NONCE_TTL_MS = 5 * 60 * 1000; // 5 minuti
 
-// --- SECURITY: GARBAGE COLLECTION ---
-// Pulisce i nonce scaduti ogni 10 minuti per prevenire Memory Leaks 
+// Pulizia nonce scaduti
 setInterval(() => {
   const now = Date.now();
-  for (const [key, value] of nonces.entries()) {
-    if (now > value.exp) {
-      nonces.delete(key);
-    }
+  for (const [addr, entry] of nonces.entries()) {
+    if (now > entry.exp) nonces.delete(addr);
   }
-}, 10 * 60 * 1000).unref(); 
+}, 10 * 60 * 1000).unref();
 
-// Genera una stringa casuale sicura
 function makeNonce() {
   return crypto.randomBytes(16).toString("hex");
 }
 
-// Determina il ruolo basandosi sugli indirizzi in whitelist (.env)
-function determineRole(address) {
-  const a = String(address || "").toLowerCase();
-  
-  // Confronto case-insensitive sicuro
-  if (a === String(config.producerAddr).toLowerCase()) return "producer";
-  if (a === String(config.resellerAddr).toLowerCase()) return "reseller";
-  if (a === String(config.consumerAddr).toLowerCase()) return "consumer";
-  
-  return "consumer"; // Default: chi non è in lista è un semplice consumatore
+export function generateNonce(address) {
+  if (!address) throw new Error("Address mancante");
+  const addr = String(address).toLowerCase();
+  const nonce = makeNonce();
+  nonces.set(addr, { nonce, exp: Date.now() + (env.NONCE_TTL_MS || 600000) });
+  return nonce;
 }
 
-/**
- * Genera un challenge (nonce) per l'utente che vuole loggarsi.
- */
-export const generateNonce = (address) => {
-  if (!address) throw new Error("Address mancante");
-  
-  const nonce = makeNonce();
-  const exp = Date.now() + NONCE_TTL_MS;
-  
-  // Salviamo in memoria
-  nonces.set(address.toLowerCase(), { nonce, exp });
-  return nonce;
-};
+// --- FIX DEFINITIVO 405 ---
+export async function checkResellerStatus(address) {
+  try {
+    if (!address) return false;
 
-/**
- * Verifica la firma digitale e rilascia il token JWT.
- */
-export const verifyLogin = (address, signature) => {
+    // 1. Normalizziamo l'indirizzo
+    const cleanAddr = String(address).trim().toLowerCase();
+    
+    const url = `${FF_NODE}/api/v1/namespaces/default/apis/WatchNFT_API/query/reseller`;
+    const res = await fetch(url, {
+      method: "POST", 
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        input: {
+             "": cleanAddr 
+        }
+      })
+    });
+
+    if (res.status === 400) {
+         const urlFallback = `${FF_NODE}/api/v1/namespaces/default/apis/WatchNFT_API/query/reseller?input=${cleanAddr}`;
+         const resFallback = await fetch(urlFallback, {
+            method: "POST", // SEMPRE POST
+            headers: { "Content-Type": "application/json" }
+         });
+         return handleResponse(resFallback, cleanAddr);
+    }
+
+    return handleResponse(res, cleanAddr);
+
+  } catch (e) {
+    console.error("❌ [EXCEPTION]", e.message);
+    return false;
+  }
+}
+
+// Helper per processare la risposta ed evitare duplicazione codice
+async function handleResponse(res, addr) {
+    if (!res.ok) {
+        const errText = await res.text();
+        console.warn(`⚠️ [ERRORE FIREFLY] Status: ${res.status}. Dettagli: ${errText}`);
+        return false;
+    }
+    
+    const data = await res.json();
+    const output = (data.output !== undefined) ? data.output : data;
+    const isAuthorized = (output === true || output === "true");
+
+    return isAuthorized;
+}
+
+// --- VERIFY LOGIN ---
+export async function verifyLogin(address, signature) {
   if (!address || !signature) throw new Error("Dati mancanti");
 
-  const addrNormal = address.toLowerCase();
-  const entry = nonces.get(addrNormal);
+  const addr = String(address).toLowerCase();
+  const entry = nonces.get(addr);
 
-  // 1. Controlli sul Nonce (Anti-Replay)
-  if (!entry) throw new Error("Nonce non trovato. Richiedi un nuovo login.");
+  if (!entry) throw new Error("Nonce non trovato.");
   if (Date.now() > entry.exp) {
-    nonces.delete(addrNormal);
+    nonces.delete(addr);
     throw new Error("Nonce scaduto.");
   }
 
-  // 2. Verifica Crittografica (Ethers)
-  const message = `Login to Watchain\nNonce: ${entry.nonce}`;
+  const message = `Login to Watchchain\nNonce: ${entry.nonce}`;
   
   let recovered;
   try {
     recovered = ethers.verifyMessage(message, signature);
-  } catch (e) {
-    throw new Error("Formato firma non valido.");
+  } catch {
+    throw new Error("Firma non valida.");
   }
 
-  if (recovered.toLowerCase() !== addrNormal) {
-    throw new Error("Firma non valida: Autenticazione fallita.");
+  if (String(recovered).toLowerCase() !== addr) {
+    throw new Error("Firma non valida: autenticazione fallita.");
   }
 
-  // 3. Pulizia (Il nonce è monouso)
-  nonces.delete(addrNormal);
+  const PRODUCER = String(env.PRODUCER_ADDR || "").toLowerCase().trim();
+  const RESELLER_ENV = String(env.RESELLER_ADDR || "").toLowerCase().trim();
 
-  // 4. Generazione Token
-  const role = determineRole(addrNormal);
-  const token = signJwt({ 
-    account: addrNormal, 
-    role: role 
-  });
+  let role = "consumer"; 
 
-  return { success: true, token, role };
-};
+  if (addr === PRODUCER) {
+    role = "producer";
+  } else if (addr === RESELLER_ENV) {
+    role = "reseller";
+  } else {
+    const isChainReseller = await checkResellerStatus(addr);
+    if (isChainReseller) {
+      role = "reseller";
+    }
+  }
+
+  nonces.delete(addr);
+  const token = signJwt({ account: addr, role: role });
+
+  return { token, role, address: addr };
+}

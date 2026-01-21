@@ -1,16 +1,9 @@
 import React, { useState } from "react";
 import { useNavigate } from "react-router-dom"; 
-import { apiGet, apiPost } from "../lib/api";
+import { AuthAPI } from "../lib/api";
 import { saveSession } from "../lib/auth"; 
 import { useWallet } from "../context/WalletContext"; 
 import { useSystem } from "../context/SystemContext"; 
-
-async function connectMetamask() {
-  if (!window.ethereum) throw new Error("MetaMask non trovato (installa l’estensione).");
-  const accounts = await window.ethereum.request({ method: "eth_requestAccounts" });
-  if (!accounts || accounts.length === 0) throw new Error("Nessun account MetaMask disponibile.");
-  return { address: accounts[0] };
-}
 
 export default function Login() {
   const navigate = useNavigate();
@@ -24,37 +17,54 @@ export default function Login() {
     setErr("");
     setLoading(true);
     try {
-      // 1. Connessione & Firma
-      const { address } = await connectMetamask();
-      const resNonce = await apiGet(`/auth/nonce?address=${address}`);
-      const nonce = resNonce?.nonce; 
-      if (!nonce) throw new Error("Nonce non ricevuto dal backend.");
+      if (!window.ethereum) throw new Error("MetaMask non trovato.");
 
-      const message = `Login to Watchain\nNonce: ${nonce}`;
+      // 1. Richiediamo l'account ATTIVO su MetaMask
+      // Se l'account non è connesso, MetaMask aprirà il popup per connetterlo.
+      const accounts = await window.ethereum.request({ method: "eth_requestAccounts" });
+      
+      if (!accounts || accounts.length === 0) {
+        throw new Error("Nessun account selezionato.");
+      }
+
+      const address = accounts[0]; // L'account che hai scelto in MetaMask
+
+      // 2. Otteniamo il Nonce
+      const resNonce = await AuthAPI.nonce(address); 
+      const nonce = resNonce?.nonce; 
+      const message = resNonce?.message;  
+
+      if (!nonce) throw new Error("Errore: Nonce non ricevuto.");
+      
+      // 3. Firma
       const signature = await window.ethereum.request({
         method: "personal_sign",
         params: [message, address],
       });
 
-      // 2. Login al Backend
-      const resLogin = await apiPost("/auth/login", { address, signature });
-      const token = resLogin?.token;
-      const role = resLogin?.role;
+      // 4. Login Backend
+      const resLogin = await AuthAPI.login(address, signature);
+      const { token, role } = resLogin;
 
-      if (!token || !role) throw new Error("Login fallito: credenziali non valide.");
+      if (!token || !role) throw new Error("Login fallito.");
 
-      // 3. SALVATAGGIO SICURO (Usa auth.js)
+      // 5. Salvataggio Sessione
       saveSession(token, address, role);
 
-      // 4. Aggiornamento Stati
+      // 6. Aggiornamento UI
       await refreshWallet(); 
       forceRefresh(); 
       
       navigate("/market"); 
 
     } catch (e) {
-      console.error(e);
-      setErr(e?.message || String(e));
+      console.error("Login Error:", e);
+      // Gestione errore "User rejected"
+      if (e.code === 4001) {
+        setErr("Connessione annullata dall'utente.");
+      } else {
+        setErr(e?.message || "Errore durante il login.");
+      }
     } finally {
       setLoading(false);
     }
