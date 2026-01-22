@@ -5,6 +5,7 @@ import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
 // Token di pagamento per l'ecosistema
 contract LuxuryCoin is ERC20 {
+    
     // fornitura fissa : 1M di LUX
     uint256 public constant INITIAL_SUPPLY = 1_000_000 ether;
 

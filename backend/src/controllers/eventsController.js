@@ -29,7 +29,10 @@ export function fireflyWebhook(req, res) {
 
     // Push live
     const io = req.app.get("io");
-    if (io) io.emit("market-update", data);
+    
+    if (io) {
+      io.emit("refresh", data);
+    }
   } catch (e) {
     console.error("Webhook error:", e);
   }

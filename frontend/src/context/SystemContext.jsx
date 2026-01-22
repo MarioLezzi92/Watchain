@@ -18,17 +18,18 @@ export function SystemProvider({ children }) {
   // --- 1. CONTROLLO INIZIALE STATO ---
   const checkStatus = async () => {
     try {
-      const baseUrl = FF_BASE.producer; // Usiamo sempre il nodo producer per lo stato
+      const baseUrl = FF_BASE.producer;
       const [m, f] = await Promise.all([
         FF.watchMarket.query.paused(baseUrl), 
         FF.watchNft.query.paused(baseUrl)
       ]);
-
+      
       const isMarketPaused = (m?.output === true || m?.output === "true");
       const isFactoryPaused = (f?.output === true || f?.output === "true");
 
-      setMarketPaused(!!m?.output);
-      setFactoryPaused(!!f?.output);
+      setMarketPaused(isMarketPaused);
+      setFactoryPaused(isFactoryPaused);
+      
     } catch (error) {
       console.warn("System status check failed:", error);
     }

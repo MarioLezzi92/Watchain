@@ -8,7 +8,6 @@ router.get("/nonce", getNonce);
 router.post("/login", login);
 router.post("/logout", logout);
 
-// Nuova rotta per il controllo stato
 router.post("/check-reseller", checkReseller);
 
 router.get("/me", requireAuth, (req, res) => {

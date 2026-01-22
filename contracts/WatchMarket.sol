@@ -23,7 +23,7 @@ contract WatchMarket is Ownable, ReentrancyGuard, EmergencyStop, PullPayments {
         SaleType saleType;
     }
 
-    // Tipo concreto WatchNFT
+    
     WatchNFT public immutable watch; 
 
     mapping(uint256 => Listing) public listings;
@@ -42,8 +42,8 @@ contract WatchMarket is Ownable, ReentrancyGuard, EmergencyStop, PullPayments {
         watch = WatchNFT(watchNftAddress_); // Casting al contratto concreto
     }
 
-    // --- Helpers ---
 
+    // --- Helpers ---
     function _requireMarketApproved(address owner, uint256 tokenId) internal view {
         bool ok = (watch.getApproved(tokenId) == address(this)) ||
                   (watch.isApprovedForAll(owner, address(this)));

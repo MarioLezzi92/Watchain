@@ -3,8 +3,6 @@ import { ethers } from "ethers";
 import { env } from "../config/env.js";
 import { signJwt } from "../utils/jwt.js";
 
-// URL del nodo FireFly
-const FF_NODE = "http://127.0.0.1:5000"; 
 
 const nonces = new Map();
 
@@ -28,57 +26,6 @@ export function generateNonce(address) {
   return nonce;
 }
 
-// --- FIX DEFINITIVO 405 ---
-export async function checkResellerStatus(address) {
-  try {
-    if (!address) return false;
-
-    // 1. Normalizziamo l'indirizzo
-    const cleanAddr = String(address).trim().toLowerCase();
-    
-    const url = `${FF_NODE}/api/v1/namespaces/default/apis/WatchNFT_API/query/reseller`;
-    const res = await fetch(url, {
-      method: "POST", 
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        input: {
-             "": cleanAddr 
-        }
-      })
-    });
-
-    if (res.status === 400) {
-         const urlFallback = `${FF_NODE}/api/v1/namespaces/default/apis/WatchNFT_API/query/reseller?input=${cleanAddr}`;
-         const resFallback = await fetch(urlFallback, {
-            method: "POST", // SEMPRE POST
-            headers: { "Content-Type": "application/json" }
-         });
-         return handleResponse(resFallback, cleanAddr);
-    }
-
-    return handleResponse(res, cleanAddr);
-
-  } catch (e) {
-    console.error("❌ [EXCEPTION]", e.message);
-    return false;
-  }
-}
-
-// Helper per processare la risposta ed evitare duplicazione codice
-async function handleResponse(res, addr) {
-    if (!res.ok) {
-        const errText = await res.text();
-        console.warn(`⚠️ [ERRORE FIREFLY] Status: ${res.status}. Dettagli: ${errText}`);
-        return false;
-    }
-    
-    const data = await res.json();
-    const output = (data.output !== undefined) ? data.output : data;
-    const isAuthorized = (output === true || output === "true");
-
-    return isAuthorized;
-}
-
 // --- VERIFY LOGIN ---
 export async function verifyLogin(address, signature) {
   if (!address || !signature) throw new Error("Dati mancanti");
@@ -92,8 +39,8 @@ export async function verifyLogin(address, signature) {
     throw new Error("Nonce scaduto.");
   }
 
+  // Verifica della firma 
   const message = `Login to Watchchain\nNonce: ${entry.nonce}`;
-  
   let recovered;
   try {
     recovered = ethers.verifyMessage(message, signature);
@@ -114,13 +61,8 @@ export async function verifyLogin(address, signature) {
     role = "producer";
   } else if (addr === RESELLER_ENV) {
     role = "reseller";
-  } else {
-    const isChainReseller = await checkResellerStatus(addr);
-    if (isChainReseller) {
-      role = "reseller";
-    }
-  }
-
+  } 
+  
   nonces.delete(addr);
   const token = signJwt({ account: addr, role: role });
 

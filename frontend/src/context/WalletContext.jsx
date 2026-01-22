@@ -42,14 +42,13 @@ export function WalletProvider({ children }) {
     const roleUrl = FF_BASE[storedRole] || FF_BASE.consumer;
 
     try {
-      const [balRes, credRes, nextIdRes] = await Promise.allSettled([
+      const [balRes, credRes] = await Promise.allSettled([
         FF.luxuryCoin.query.balanceOf(roleUrl, { account: storedAddress }),
         FF.watchMarket.query.creditsOf(roleUrl, { payee: storedAddress }),
-        FF.watchNft.query.nextId(roleUrl)
       ]);
 
       if (balRes.status === "fulfilled") {
-        const lux = (safeBigInt(balRes.value.output) / 10n**18n).toString();
+        const lux = (safeBigInt(balRes.value.output) / 10n ** 18n).toString();
         setBalance(lux);
       } else {
         setBalance("0");
@@ -61,31 +60,8 @@ export function WalletProvider({ children }) {
         setPendingBalance("0");
       }
 
-      if (nextIdRes.status === "fulfilled") {
-        const totalNFTs = Number(nextIdRes.value.output);
-        let myWatches = [];
-        const ownerPromises = [];
-        for (let i = 1; i <= totalNFTs; i++) {
-          ownerPromises.push(FF.watchNft.query.ownerOf(roleUrl, { tokenId: String(i) }));
-        }
-
-        const owners = await Promise.allSettled(ownerPromises);
-        owners.forEach((res, index) => {
-          if (res.status === "fulfilled") {
-            const ownerAddr = String(res.value.output).toLowerCase();
-            if (ownerAddr === storedAddress.toLowerCase()) {
-              myWatches.push({ 
-                tokenId: index + 1, 
-                owner: ownerAddr 
-              });
-            }
-          }
-        });
-        setInventory(myWatches);
-      } else {
-        setInventory([]);
-      }
-
+      // WalletContext non deve più calcolare inventory (lo fa MePage)
+      setInventory([]);
     } catch (error) {
       console.error("Critical Wallet Sync Error:", error);
     } finally {
@@ -93,33 +69,47 @@ export function WalletProvider({ children }) {
     }
   }, []);
 
-  // --- 2. SECURITY: AUTO-LOGOUT SU CAMBIO ACCOUNT (NUOVO) ---
+
+  // --- 2. SECURITY: AUTO-LOGOUT SU CAMBIO ACCOUNT  ---
   useEffect(() => {
-    if (window.ethereum) {
-      const handleAccountsChanged = (accounts) => {
-        const currentSessionAddr = getAddress();
+      if (window.ethereum) {
         
-        // Se non ci sono account o l'account attivo è diverso da quello in sessione
-        if (accounts.length === 0 || (currentSessionAddr && accounts[0].toLowerCase() !== currentSessionAddr.toLowerCase())) {
-          console.warn("⚠️ Cambio account rilevato. Logout forzato.");
-          logout(); // Pulisce localStorage
-          window.location.href = "/login"; // Ti rispedisce al login
-        }
-      };
+        // A. CONTROLLO ALL'AVVIO 
+        window.ethereum.request({ method: 'eth_accounts' }).then(accounts => {
+          const storedAddr = getAddress();
+          
+          if (storedAddr && (accounts.length === 0 || accounts[0].toLowerCase() !== storedAddr.toLowerCase())) {
+            console.warn(" Sessione non valida rilevata all'avvio. Logout automatico.");
+            logout(); 
+            setAddress(null);
+            setRole(null);
+            if (window.location.pathname !== "/login") {
+                window.location.href = "/login";
+            }
+          }
+        }).catch(console.error);
 
-      const handleChainChanged = () => {
-        window.location.reload(); 
-      };
+        // B. ASCOLTO CAMBIAMENTI 
+        const handleAccountsChanged = (accounts) => {
+          const currentSessionAddr = getAddress();
+          if (accounts.length === 0 || (currentSessionAddr && accounts[0].toLowerCase() !== currentSessionAddr.toLowerCase())) {
+            console.warn("Cambio account rilevato. Logout forzato.");
+            logout();
+            window.location.href = "/login";
+          }
+        };
 
-      window.ethereum.on("accountsChanged", handleAccountsChanged);
-      window.ethereum.on("chainChanged", handleChainChanged);
+        const handleChainChanged = () => window.location.reload(); 
 
-      return () => {
-        window.ethereum.removeListener("accountsChanged", handleAccountsChanged);
-        window.ethereum.removeListener("chainChanged", handleChainChanged);
-      };
-    }
-  }, []);
+        window.ethereum.on("accountsChanged", handleAccountsChanged);
+        window.ethereum.on("chainChanged", handleChainChanged);
+
+        return () => {
+          window.ethereum.removeListener("accountsChanged", handleAccountsChanged);
+          window.ethereum.removeListener("chainChanged", handleChainChanged);
+        };
+      }
+    }, []);
 
   // Sync iniziale
   useEffect(() => {

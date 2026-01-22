@@ -6,7 +6,9 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const PROJECT_ROOT = path.resolve(__dirname, ".."); 
+// Definizione dei percorsi per entrambi i file .env
 const BACKEND_ENV_PATH = path.join(PROJECT_ROOT, "backend", ".env");
+const FRONTEND_ENV_PATH = path.join(PROJECT_ROOT, "frontend", ".env");
 
 const ARTIFACTS = {
   LuxuryCoin: path.join(PROJECT_ROOT, "artifacts", "contracts", "LuxuryCoin.sol", "LuxuryCoin.json"),
@@ -100,9 +102,6 @@ async function ffGet(url) {
 async function getFireFlyAccounts(base) {
   try {
     const verifiers = await ffGet(`${base}/verifiers`);
-    // L'API di solito restituisce i verifier in ordine cronologico inverso o sparso.
-    // .reverse() qui serve a ripristinare l'ordine di creazione (Producer -> Reseller -> Consumer)
-    // se il nodo li restituisce dal più recente al più vecchio.
     return verifiers.filter(v => v.type === "ethereum_address").map(v => v.value).reverse(); 
   } catch (e) {
     return [];
@@ -147,13 +146,8 @@ async function main() {
   const base = env.FF_PRODUCER_BASE;
   if (!base) die("FF_PRODUCER_BASE mancante in backend/.env");
 
-  // Recupera gli account dalla chain tramite FireFly
   const accounts = await getFireFlyAccounts(base);
   
-  // Mapping basato sull'ordine standard dello stack FireFly
-  // [0] = Producer (node 0)
-  // [1] = Reseller (node 1)
-  // [2] = Consumer (node 2)
   const producerAddr = accounts[0];
   const resellerAddr = accounts[1];
   const consumerAddr = accounts[2];
@@ -169,7 +163,6 @@ async function main() {
   console.log(`👤 Consumer: ${consumerAddr}\n`);
 
   // 1. LuxuryCoin
-  // Passiamo il Reseller e il Consumer come destinatari iniziali (opzionale, dipende dal tuo contratto)
   const luxAddr = await deployContract({
     base, 
     fromKey: producerAddr, 
@@ -179,7 +172,6 @@ async function main() {
   });
 
   // 2. WatchNFT
-  // Il producer è il proprietario iniziale/minter
   const nftAddr = await deployContract({
     base, 
     fromKey: producerAddr, 
@@ -189,7 +181,6 @@ async function main() {
   });
 
   // 3. WatchMarket
-  // Collega il mercato ai token appena creati
   const marketAddr = await deployContract({
     base, 
     fromKey: producerAddr, 
@@ -198,22 +189,31 @@ async function main() {
     inputArgs: [luxAddr, nftAddr],
   });
 
-  console.log("\n=== 📝 AGGIORNAMENTO .ENV ===");
+  console.log("\n=== 📝 AGGIORNAMENTO ENV ===");
   
-  // Aggiorniamo sia i contratti che gli utenti
+  // 1. Aggiornamento Backend
+  console.log("-> Backend .env");
   upsertEnvVars(BACKEND_ENV_PATH, {
-    // Indirizzi Contratti
     LUXURYCOIN_ADDRESS: luxAddr,
     WATCHNFT_ADDRESS: nftAddr,
     WATCHMARKET_ADDRESS: marketAddr,
-    
-    // Indirizzi Utenti (Nodi)
     PRODUCER_ADDR: producerAddr,
     RESELLER_ADDR: resellerAddr,
     CONSUMER_ADDR: consumerAddr
   });
 
-  console.log("✅ File .env aggiornato con successo.");
+  // 2. Aggiornamento Frontend (Con prefisso VITE_)
+  console.log("-> Frontend .env");
+  upsertEnvVars(FRONTEND_ENV_PATH, {
+    VITE_LUXURYCOIN_ADDRESS: luxAddr,
+    VITE_WATCHNFT_ADDRESS: nftAddr,
+    VITE_WATCHMARKET_ADDRESS: marketAddr,
+    VITE_PRODUCER_ADDR: producerAddr,
+    VITE_RESELLER_ADDR: resellerAddr,
+    VITE_CONSUMER_ADDR: consumerAddr
+  });
+
+  console.log("✅ File .env aggiornati con successo.");
   console.log("Sincronizzazione completata.");
 }
 

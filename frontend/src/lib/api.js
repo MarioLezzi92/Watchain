@@ -1,12 +1,9 @@
 import { getToken, clearSession } from "./auth.js";
-import { FF_BASE, FF_APIS, ffInvoke, ffQuery, ffListenerGet } from "./firefly";
+import { FF_BASE, FF_APIS, ffInvoke, ffQuery, ffListenerGet, ffTokensPoolsList, ffTokensBalances, ffResolveSubscriptionId, ffSubscriptionEvents  } from "./firefly";
 
-// Riesportiamo le costanti per comodità delle altre pagine
 export { FF_BASE, FF_APIS, ffInvoke, ffQuery, ffListenerGet };
-
 const BACKEND_BASE = "http://127.0.0.1:3001";
 
-// --- HELPERS RETE BACKEND (Node.js) ---
 
 async function parseJsonSafely(res) {
   return res.json().catch(() => ({}));
@@ -91,7 +88,20 @@ export const FF = {
     invoke: (roleBaseUrl, apiName, method, input = {}, opts = {}) => ffInvoke(roleBaseUrl, apiName, method, input, opts),
     query: (roleBaseUrl, apiName, method, input = {}, opts = {}) => ffQuery(roleBaseUrl, apiName, method, input, opts),
     listener: (roleBaseUrl, apiName, evt, opts = {}) => ffListenerGet(roleBaseUrl, apiName, evt, opts),
-  },  
+  },
+  
+  tokens: {
+    pools: (roleBaseUrl) => ffTokensPoolsList(roleBaseUrl),
+    balances: (roleBaseUrl, { pool, key }) => ffTokensBalances(roleBaseUrl, { pool, key }),
+  },
+
+  subscriptions: {
+    eventsByName: async (roleBaseUrl, subName, opts) => {
+      const subId = await ffResolveSubscriptionId(roleBaseUrl, subName);
+      return ffSubscriptionEvents(roleBaseUrl, subId, opts);
+    },
+  },
+
 
   // API Dinamiche (create col Proxy)
   watchMarket: createProxyApi(FF_APIS.watchMarket),

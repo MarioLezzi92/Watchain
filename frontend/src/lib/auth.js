@@ -3,18 +3,21 @@
 const KEY_TOKEN = "watchain.jwt";
 const KEY_ADDRESS = "watchain.address";
 const KEY_ROLE = "watchain.role";
+export const AUTH_EVENT = "watchain:auth";
 
 export function saveSession(token, address, role) {
   if (!token || !address || !role) throw new Error("saveSession: dati mancanti");
   localStorage.setItem(KEY_TOKEN, token);
   localStorage.setItem(KEY_ADDRESS, address);
   localStorage.setItem(KEY_ROLE, role);
+  window.dispatchEvent(new Event(AUTH_EVENT));
 }
 
 export function clearSession() {
   localStorage.removeItem(KEY_TOKEN);
   localStorage.removeItem(KEY_ADDRESS);
   localStorage.removeItem(KEY_ROLE);
+  window.dispatchEvent(new Event(AUTH_EVENT));
 }
 
 export function getToken() {
@@ -36,3 +39,4 @@ export function isLoggedIn() {
 export function logout() {
   clearSession();
 }
+

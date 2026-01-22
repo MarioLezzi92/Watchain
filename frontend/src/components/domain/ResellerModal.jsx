@@ -6,7 +6,7 @@ import {
   ShieldExclamationIcon,
   QuestionMarkCircleIcon 
 } from "@heroicons/react/24/outline";
-import { AuthAPI, FF, FF_BASE } from "../../lib/api"; 
+import { FF, FF_BASE } from "../../lib/api"; 
 import { formatError } from "../../lib/formatters"; 
 
 const formatShortAddress = (addr) => {
@@ -24,10 +24,14 @@ export default function ResellerModal({ isOpen, onClose }) {
   const fetchStatus = async () => {
     if (!targetReseller) return;
     try {
-      const res = await AuthAPI.checkReseller(targetReseller);
-      setCurrentStatus(res.isAuthorized);
+      const roleUrl = FF_BASE.producer;
+      const res = await FF.watchNft.query.reseller(roleUrl, {
+        "": targetReseller
+      });  
+      const isAuth = (res.output === true || String(res.output) === "true");
+      setCurrentStatus(isAuth);
     } catch (e) {
-      console.error(e);
+      console.error("Errore lettura stato Chain: ", e);
     }
   };
 
@@ -37,16 +41,6 @@ export default function ResellerModal({ isOpen, onClose }) {
       setCurrentStatus(null); 
       fetchStatus();
     }
-  }, [isOpen, targetReseller]);
-
-  useEffect(() => {
-    if (!isOpen || !targetReseller) return;
-    const intervalId = setInterval(() => {
-      AuthAPI.checkReseller(targetReseller)
-        .then(res => setCurrentStatus(res.isAuthorized))
-        .catch(console.error);
-    }, 3000);
-    return () => clearInterval(intervalId);
   }, [isOpen, targetReseller]);
 
   const handleToggleStatus = async () => {
@@ -68,7 +62,6 @@ export default function ResellerModal({ isOpen, onClose }) {
       setCurrentStatus(newState); 
       
     } catch (err) {
-      // 2. FIX: Usiamo il formatError con context FACTORY (Gestione Reseller è parte della Factory logic)
       setMsg(`❌ ${formatError(err, "FACTORY")}`);
     } finally {
       setBusy(false);

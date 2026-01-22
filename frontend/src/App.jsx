@@ -24,7 +24,6 @@ export default function App() {
             </ProtectedRoute>
           }
         />
-        
         <Route path="*" element={<Navigate to="/market" replace />} />
       </Routes>
     </BrowserRouter>
