@@ -47,127 +47,122 @@ export default function MarketPage() {
 
 
 
-const refreshListings = useCallback(async (silent = true) => {
-  if (!silent) setLoading(true);
+  const refreshListings = useCallback(async (silent = true) => {
+    if (!silent) setLoading(true);
 
-  try {
-    if (!role) {
-      setListings([]);
-      return;
-    }
-
-    const roleUrl = getRoleBaseUrl(role);
-
-    // 1) Recupero Eventi
-    const evRaw = await FF.subscriptions.eventsByName(
-      FF_BASE.producer,
-      "watchchain_webhook",
-      { limit: 500 }
-    );
-
-    let events = Array.isArray(evRaw)
-      ? evRaw
-      : (evRaw.items || evRaw.results || []);
-
-    // FIX FANTASMI: Invertiamo per riprodurre la storia dal passato al presente
-    events = events.reverse(); 
-
-    const getEventName = (e) =>
-      String(e?.blockchainEvent?.name || e?.name || e?.event?.name || "").toLowerCase();
-
-    const getOut = (e) =>
-      e?.blockchainEvent?.output || e?.data?.output || e?.output || null;
-
-    const getTokenId = (e) => {
-      const out = getOut(e);
-      if (out?.tokenId != null) return String(out.tokenId);
-      if (out?.["0"] != null) return String(out["0"]);
-      return null;
-    };
-
-    const getSaleType = (e) => {
-      const out = getOut(e);
-      if (out?.saleType != null) return Number(String(out.saleType)); 
-      if (out?.["3"] != null) return Number(String(out["3"]));
-      return null;
-    };
-
-    // 2) Mappa stato
-    const active = new Map();
-
-    for (const e of events) {
-      const name = getEventName(e);
-      const tokenId = getTokenId(e);
-      if (!tokenId) continue;
-
-      if (name === "listed") {
-        active.set(tokenId, getSaleType(e));
-      } else if (name === "canceled" || name === "purchased") {
-        active.delete(tokenId);
-      }
-    }
-
-    // Filtro Tab
-    const targetType = viewMode === 'PRIMARY' ? 0 : 1;
-    const tokenIds = Array.from(active.entries())
-      .filter(([_, st]) => st === targetType) 
-      .map(([tokenId]) => tokenId);
-
-    // 3) Fetch Dettagli
-    const results = [];
-    const CHUNK = 30;
-
-    for (let i = 0; i < tokenIds.length; i += CHUNK) {
-      const slice = tokenIds.slice(i, i + CHUNK);
-      const batch = await Promise.all(
-        slice.map(async (tokenId) => {
-          const [listingRes, certRes] = await Promise.all([
-             FF.watchMarket.query.listings(roleUrl, { "": String(tokenId) }),
-             FF.watchNft.query.certified(roleUrl, { tokenId: String(tokenId) })
-          ]);
-
-          const listing = listingRes.output || listingRes;
-          const isCertified = certRes.output === true || String(certRes.output) === "true";
-
-          if (!listing?.seller) return null;
-          const seller = String(listing.seller).toLowerCase();
-          if (seller === ZERO_ADDR) return null;
-
-          return {
-            tokenId: String(tokenId),
-            seller,
-            price: listing.price,
-            priceLux: formatLux(listing.price),
-            saleType: active.get(String(tokenId)) ?? null,
-            certified: isCertified, 
-          };
-        })
-      );
-      for (const x of batch) if (x) results.push(x);
-    }
-
-    // FIX ORDINAMENTO: Ordina per ID crescente
-    results.sort((a, b) => Number(a.tokenId) - Number(b.tokenId));
-
-    setListings(results);
-  } catch (e) {
-    console.error("refreshListings error:", e);
-    setListings([]);
-  } finally {
-    if (!silent) setLoading(false);
-  }
-}, [role, viewMode]);
-
-  const refreshBalance = async () => {
-    if (!address || !role) return;
     try {
+      if (!role) {
+        setListings([]);
+        return;
+      }
+
       const roleUrl = getRoleBaseUrl(role);
-      const res = await FF.luxuryCoin.query.balanceOf(roleUrl, { account: address });      
-      setBalanceLux(formatLux(res?.output || "0"));
-    } catch (error) {
-      console.error("ERROR BALANCE: ", error);
+
+      // 1) Recupero Eventi
+      const evRaw = await FF.subscriptions.eventsByName(
+        FF_BASE.producer,
+        "watchain_webhook",
+        { limit: 500 }
+      );
+
+      let events = Array.isArray(evRaw)
+        ? evRaw
+        : (evRaw.items || evRaw.results || []);
+
+      events = events.reverse(); 
+
+      const getEventName = (e) =>
+        String(e?.blockchainEvent?.name || e?.name || e?.event?.name || "").toLowerCase();
+
+      const getOut = (e) =>
+        e?.blockchainEvent?.output || e?.data?.output || e?.output || null;
+
+      const getTokenId = (e) => {
+        const out = getOut(e);
+        if (out?.tokenId != null) return String(out.tokenId);
+        if (out?.["0"] != null) return String(out["0"]);
+        return null;
+      };
+
+      const getSaleType = (e) => {
+        const out = getOut(e);
+        if (out?.saleType != null) return Number(String(out.saleType)); 
+        if (out?.["3"] != null) return Number(String(out["3"]));
+        return null;
+      };
+
+      const active = new Map();
+
+      for (const e of events) {
+        const name = getEventName(e);
+        const tokenId = getTokenId(e);
+        if (!tokenId) continue;
+
+        if (name === "listed") {
+          active.set(tokenId, getSaleType(e));
+        } else if (name === "canceled" || name === "purchased") {
+          active.delete(tokenId);
+        }
+      }
+      
+      const targetType = viewMode === 'PRIMARY' ? 0 : 1;
+      const tokenIds = Array.from(active.entries())
+        .filter(([_, st]) => st === targetType) 
+        .map(([tokenId]) => tokenId);
+
+      const results = [];
+      const CHUNK = 30;
+
+      for (let i = 0; i < tokenIds.length; i += CHUNK) {
+        const slice = tokenIds.slice(i, i + CHUNK);
+        const batch = await Promise.all(
+          slice.map(async (tokenId) => {
+            const [listingRes, certRes] = await Promise.all([
+              FF.watchMarket.query.listings(roleUrl, { "": String(tokenId) }),
+              FF.watchNft.query.certified(roleUrl, { tokenId: String(tokenId) })
+            ]);
+
+            const listing = listingRes.output || listingRes;
+            const isCertified = certRes.output === true || String(certRes.output) === "true";
+
+            if (!listing?.seller) return null;
+            const seller = String(listing.seller).toLowerCase();
+            if (seller === ZERO_ADDR) return null;
+
+            return {
+              tokenId: String(tokenId),
+              seller,
+              price: listing.price,
+              priceLux: formatLux(listing.price),
+              saleType: active.get(String(tokenId)) ?? null,
+              certified: isCertified, 
+            };
+          })
+        );
+        for (const x of batch) if (x) results.push(x);
+      }
+
+      results.sort((a, b) => Number(a.tokenId) - Number(b.tokenId));
+
+      setListings(results);
+    } catch (e) {
+      console.error("refreshListings error:", e);
+      setListings([]);
+    } finally {
+      if (!silent) setLoading(false);
     }
-  };
+  }, [role, viewMode]);
+
+  const refreshBalance = useCallback(async () => {
+      if (!address || !role) return;
+      try {
+        const roleUrl = getRoleBaseUrl(role);
+        const res = await FF.luxuryCoin.query.balanceOf(roleUrl, { account: address });      
+        setBalanceLux(formatLux(res?.output || "0"));
+      } catch (error) {
+        console.error("ERROR BALANCE: ", error);
+      }
+    }, [address, role]);
 
   useEffect(() => {
     if (role === 'consumer') setViewMode('SECONDARY');
@@ -180,7 +175,6 @@ const refreshListings = useCallback(async (silent = true) => {
   }, [viewMode, address, role, refreshListings]);
 
 
-
   useEffect(() => {
     if (refreshTrigger > 0) {
       refreshListings(true);
@@ -189,7 +183,7 @@ const refreshListings = useCallback(async (silent = true) => {
   }, [refreshTrigger, refreshListings, refreshBalance]);
 
 
-const handleCancelClick = (item) => {
+  const handleCancelClick = (item) => {
     setConfirmModal({
       isOpen: true,
       title: "Ritira Orologio",
@@ -204,9 +198,9 @@ const handleCancelClick = (item) => {
           setSelected(null);
           setSuccessModal({ isOpen: true, message: "Listing rimosso." });
           
-          refreshListings(true);
           refreshBalance();
           refreshWallet();
+          
         } catch (e) {
           setErrorModal({ isOpen: true, message: formatError(e, "MARKET") });
         } finally {
@@ -216,8 +210,6 @@ const handleCancelClick = (item) => {
       }
     });
   };
-
-
 
   const performBuy = async (item) => {
     setBusy(true);
@@ -253,11 +245,12 @@ const handleCancelClick = (item) => {
     }
   };
 
-const handleBuyClick = async (item) => {
+  const handleBuyClick = async (item) => {
       try {
         const roleUrl = getRoleBaseUrl(role);
-        const marketAddr = import.meta.env.VITE_WATCHMARKET_ADDRESS;
+        const marketAddr = await FF.directory.resolveApi(FF.apis.watchMarket);
         const priceWei = item.price; 
+
 
         // 1. Controllo Silenzioso Allowance
         const allowanceRes = await FF.luxuryCoin.query.allowance(roleUrl, {
@@ -314,8 +307,6 @@ const handleBuyClick = async (item) => {
           setErrorModal({ isOpen: true, message: "Errore durante la preparazione dell'acquisto." });
       }
     };
-
-
 
   return (
     <AppShell title="Watchain" address={address} balanceLux={balanceLux}>

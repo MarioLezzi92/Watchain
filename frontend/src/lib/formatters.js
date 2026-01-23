@@ -47,17 +47,27 @@ export function shortAddr(address) {
 
 export function formatError(error, context = "GENERAL") {
   if (!error) return "Errore sconosciuto";
+  // Convertiamo in stringa e lowercase per matching sicuro
   const msg = (error.message || String(error)).toLowerCase();
 
+  // --- ERRORI DI SISTEMA / RETE ---
   if (msg.includes("paused") || msg.includes("emergency")) {
     if (context === "MARKET") return "MERCATO SOSPESO: acquisto/vendita/prelievo temporaneamente bloccati.";
     if (context === "FACTORY") return "PRODUZIONE SOSPESA: minting/certificazioni non disponibili.";
     return "SISTEMA IN MANUTENZIONE: operazioni temporaneamente sospese.";
   }
-
-  if (msg.includes("only active reseller")) return "ACCESSO NEGATO: operazione riservata ai Rivenditori Autorizzati.";
+  if (msg.includes("user denied") || msg.includes("rejected")) return "Operazione annullata dall'utente.";
   if (msg.includes("insufficient funds") || msg.includes("0xe450d38")) return "SALDO INSUFFICIENTE: LUX non sufficienti.";
-  if (msg.includes("user denied")) return "Operazione annullata dall'utente.";
-
+  
+  // --- ERRORI SPECIFICI WATCHMARKET / NFT ---
+  if (msg.includes("market not approved")) return "APPROVAZIONE MANCANTE: Devi approvare il Market prima di mettere in vendita.";
+  if (msg.includes("only active reseller")) return "ACCESSO NEGATO: Solo i Rivenditori Autorizzati possono eseguire questa operazione.";
+  if (msg.includes("seller disabled")) return "ACQUISTO NEGATO: Stai provando ad acquistare da un Reseller non autorizzato.";
+  if (msg.includes("not in escrow")) return "ERRORE CRITICO: L'orologio non è nell'Escrow del market.";
+  if (msg.includes("not owner")) return "NON SEI IL PROPRIETARIO: Non possiedi questo orologio.";
+  if (msg.includes("already listed")) return "GIÀ IN VENDITA: Questo orologio è già listato.";
+  if (msg.includes("only certified")) return "NON CERTIFICATO: Devi certificare l'orologio prima di venderlo.";
+  
+  // Fallback generico
   return error.message || String(error);
 }

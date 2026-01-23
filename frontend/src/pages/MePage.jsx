@@ -31,7 +31,6 @@ const getRoleBaseUrl = (role) => {
   return FF_BASE.consumer;
 };
 
-// COSTANTE FONDAMENTALE: L'indirizzo vuoto di Solidity
 const ZERO_ADDR = "0x0000000000000000000000000000000000000000";
 
 export default function MePage() {
@@ -55,7 +54,7 @@ export default function MePage() {
     error: null    
   });
 
-  // --- LOGICA INVENTARIO  ---
+  // --- LOGICA INVENTARIO (AGGIORNATA PER ESCROW) ---
   const refreshInventory = useCallback(async (silent = true) => {
     if (!address) return;
     if (!silent) setLoadingInventory(true);
@@ -64,59 +63,90 @@ export default function MePage() {
       const roleUrl = getRoleBaseUrl(role);
       const myAddr = address.toLowerCase();
 
-      // UNICA fonte dati
-      const raw = await FF.tokens.balances(FF_BASE.producer, {
+      // A. OROLOGI NEL WALLET (Non in vendita)
+      const rawBal = await FF.tokens.balances(FF_BASE.producer, {
         pool: "watchnft",
         key: address,
       });
+      const rows = Array.isArray(rawBal) ? rawBal : (rawBal.items || rawBal.results || []);
+      
+      const walletIds = rows
+        .filter(r => {
+            const key = String(r.key ?? r.account ?? r.owner ?? r.holder ?? "").toLowerCase();
+            const amt = Number(r.amount ?? r.balance ?? 0);
+            return key === myAddr && amt > 0;
+        })
+        .map(r => String(r.tokenIndex ?? r.tokenId ?? ""));
 
-      const rows = Array.isArray(raw) ? raw : (raw.items || raw.results || []);
+      const evRaw = await FF.subscriptions.eventsByName(FF_BASE.producer, "watchain_webhook", { limit: 500 });
+      let events = Array.isArray(evRaw) ? evRaw : (evRaw.items || evRaw.results || []);
+      events = events.reverse(); // Ordine cronologico per ricostruire stato
 
-      const ownedRows = rows.filter(r => {
-        const key = String(r.key ?? r.account ?? r.owner ?? r.holder ?? "").toLowerCase();
-        const amtRaw = r.amount ?? r.balance ?? r.value ?? 0;
-        const amt = typeof amtRaw === "bigint" ? Number(amtRaw) : Number(String(amtRaw));
-        return key === myAddr && Number.isFinite(amt) && amt > 0;
-      });
+      const escrowIds = new Set();
+      
+      for (const e of events) {
+        const name = String(e?.blockchainEvent?.name || "").toLowerCase();
+        const out = e?.blockchainEvent?.output || {};
+        const tokenId = String(out.tokenId || "");
+        
+        if (!tokenId) continue;
+
+        if (name === "listed") {
+            const seller = String(out.seller || "").toLowerCase();
+            if (seller === myAddr) {
+                escrowIds.add(tokenId);
+            }
+        } else if (name === "canceled" || name === "purchased") {
+            // Se venduto o cancellato, non è più in escrow a mio nome
+            escrowIds.delete(tokenId);
+        }
+      }
+
+      const allIds = Array.from(new Set([...walletIds, ...escrowIds]));
 
       const myWatches = [];
 
-      for (const r of ownedRows) {
-        const tokenId = String(
-          r.tokenIndex ?? r.tokenID ?? r.tokenId ?? r.token_id ?? ""
-        );
+      for (const tokenId of allIds) {
         if (!tokenId) continue;
 
+        // Fetch dati on-chain
         const [listingRes, certRes] = await Promise.all([
           FF.watchMarket.query.listings(roleUrl, { "": tokenId }),
           FF.watchNft.query.certified(roleUrl, { tokenId }),
         ]);
 
         const listing = listingRes.output || listingRes;
-        const isCertified =
-          certRes.output === true || String(certRes.output).toLowerCase() === "true";
+        const isCertified = certRes.output === true || String(certRes.output).toLowerCase() === "true";
 
         let sellerAddr = null;
         let priceLux = null;
 
-        if (listing?.seller && listing.seller !== ZERO_ADDR) {
-          sellerAddr = listing.seller.toLowerCase();
+        // Verifica se è effettivamente listato
+        if (listing?.seller && String(listing.seller) !== ZERO_ADDR) {
+          sellerAddr = String(listing.seller).toLowerCase();
           priceLux = formatLux(listing.price);
         }
 
-        myWatches.push({
-          tokenId,
-          owner: myAddr,
-          seller: sellerAddr,
-          price: sellerAddr ? listing.price : null,
-          priceLux,
-          certified: isCertified,
-          isMineOwner: true,
-          isMineSeller: sellerAddr === myAddr,
-        });
+        const isMineInWallet = walletIds.includes(tokenId);
+        const isMineInEscrow = sellerAddr === myAddr;
+
+        if (isMineInWallet || isMineInEscrow) {
+            myWatches.push({
+              tokenId,
+              owner: isMineInEscrow ? sellerAddr : myAddr, // UI trick: mostra me come owner
+              seller: sellerAddr,
+              price: sellerAddr ? listing.price : null,
+              priceLux,
+              certified: isCertified,
+              isMineOwner: true,
+              isMineSeller: isMineInEscrow,
+            });
+        }
       }
+
       myWatches.sort((a, b) => Number(a.tokenId) - Number(b.tokenId));
       setInventory(myWatches);
+
     } catch (e) {
       console.error("Errore recupero inventario:", e);
       setInventory([]);
@@ -124,10 +154,6 @@ export default function MePage() {
       if (!silent) setLoadingInventory(false);
     }
   }, [address, role]);
-
-
-
-
 
   // --- EFFETTI ---
   useEffect(() => {
@@ -142,28 +168,27 @@ export default function MePage() {
     }
   }, [refreshTrigger, refreshInventory, refreshWallet]);
 
-
   // --- HELPERS MODALI ---
   const closeModals = () => setModals(p => ({ ...p, detail: false, confirm: null, success: null, error: null }));
-  
   const openConfirm = (title, message, onConfirm) => setModals(p => ({ ...p, confirm: { title, message, onConfirm } }));
-  
   const openSuccess = (msg) => setModals(p => ({ ...p, success: msg, detail: false, confirm: null }));
-  
   const openError = (msg) => setModals(p => ({ ...p, error: msg, confirm: null }));
-  
+  const handleError = (e, context = "GENERAL") => openError(formatError(e, context));
+
+  // --- APPROVAL LOGIC ---
   const ensureMarketApprovalThen = async (actionFn) => {
     const roleUrl = getRoleBaseUrl(role);
-    const marketAddr = import.meta.env.VITE_WATCHMARKET_ADDRESS;
-    if (!marketAddr) throw new Error("Missing VITE_WATCHMARKET_ADDRESS in frontend/.env");
-
+    const marketAddr = await FF.directory.resolveApi(FF.apis.watchMarket);
+    
     try {
       const res = await FF.watchNft.query.isApprovedForAll(roleUrl, {
         owner: address,
         operator: marketAddr
       });
       
-      if (res.output === true) return await actionFn();
+      const isApproved = (res.output === true || String(res.output) === "true");
+      
+      if (isApproved) return await actionFn();
 
       openConfirm(
         "Autorizzazione NFT",
@@ -174,9 +199,11 @@ export default function MePage() {
             await FF.watchNft.invoke.setApprovalForAll(roleUrl, {
               operator: marketAddr,
               approved: true
-            });
-            closeModals();
-            setTimeout(async () => await actionFn(), 2000); 
+            }, { confirm: true, key : address }); 
+
+            await new Promise(r => setTimeout(r, 1000));
+            closeModals(); // Chiudi modale conferma
+            await actionFn(); // Procedi con l'azione
           } catch (e) {
             handleError(e);
           } finally {
@@ -189,62 +216,38 @@ export default function MePage() {
     }
   };
 
-  const handleError = (e, context = "GENERAL") => {
-        const msg = formatError(e, context); // Passiamo il contesto al formatter
-        openError(msg);
-    };
 
-  // --- AZIONI ---
-  const performAction = async (actionFn, successMsg, context = "GENERAL") => { // Aggiungi param
+  const handleMint = async () => {
       setBusy(true);
       try {
-        await actionFn();
-        openSuccess(successMsg);
-        refreshWallet();
-        refreshInventory(true); 
+        const roleUrl = getRoleBaseUrl(role);
+        await FF.watchNft.invoke.manufacture(roleUrl,{}, { key: address }); 
+        openSuccess("Orologio coniato con successo!");
+        refreshInventory(true);
       } catch (e) {
-        handleError(e, context); // Usa param qui
+        handleError(e, "FACTORY");
       } finally {
         setBusy(false);
       }
   };
 
-  const handleMint = async () => {
-      // Mint è un'azione di Produzione -> FACTORY
-      setBusy(true);
-      try {
-        const roleUrl = getRoleBaseUrl(role);
-        await FF.watchNft.invoke.manufacture(roleUrl, { to: address});
-        openSuccess("Orologio coniato con successo!");
-        refreshWallet();
-        refreshInventory(true);
-      } catch (e) {
-        handleError(e, "FACTORY"); // <--- QUI
-      } finally {
-        setBusy(false);
-      }
-    };;
-  
-
-const handleList = async (item, priceLuxInput) => {
+  const handleList = async (item, priceLuxInput) => {
     const roleUrl = getRoleBaseUrl(role);
     const priceInWei = parseLux(priceLuxInput);
 
     const runListingLogic = async () => {
       setBusy(true);
-      try {
-          if (item.priceLux) {
-            await FF.watchMarket.invoke.cancelListing(roleUrl, { tokenId: item.tokenId } );
-          }
+      try {          
           const method = (role === "producer") ? "listPrimary" : "listSecondary";
           
           await FF.watchMarket.invoke[method](roleUrl, {
             tokenId: item.tokenId,
             price: priceInWei 
-          }); 
-          openSuccess("Orologio messo in vendita con successo!");
-          closeModals();
-          refreshWallet(); 
+          }, { key: address }); 
+          
+          openSuccess(`Orologio #${item.tokenId} messo in vendita per ${priceLuxInput} LUX!`);
+          refreshWallet();
+          refreshInventory(true);
           
       } catch (e) {
           handleError(e, "MARKET");
@@ -252,46 +255,65 @@ const handleList = async (item, priceLuxInput) => {
           setBusy(false);
       }
     };
+    
+    // Serve approvazione solo se NON è già nel market (ma handleList è per non-listati)
     ensureMarketApprovalThen(runListingLogic);
   };
 
+  // Aggiornamento Prezzo 
+  const handleUpdatePrice = async (item, newPriceLux) => {
+      setBusy(true);
+      try {
+          const roleUrl = getRoleBaseUrl(role);
+          const newPriceWei = parseLux(newPriceLux);
+
+          await FF.watchMarket.invoke.updateListingPrice(roleUrl, {
+              tokenId: item.tokenId,
+              newPrice: newPriceWei
+          }, { key: address });
+
+          openSuccess(`Prezzo aggiornato a ${newPriceLux} LUX!`);
+          refreshInventory(true);
+      } catch (e) {
+          handleError(e, "MARKET");
+      } finally {
+          setBusy(false);
+      }
+  };
 
   const handleCertify = async (item) => {
-      if (role !== "reseller") return openError("Solo Reseller...");
-      
       setBusy(true);
       try {
         const roleUrl = getRoleBaseUrl(role);
-        await FF.watchNft.invoke.certify(roleUrl, { tokenId: item.tokenId });
-        
+        await FF.watchNft.invoke.certify(roleUrl, { tokenId: item.tokenId }, { key : address });
         openSuccess(`Certificato emesso per orologio #${item.tokenId}!`);
         refreshInventory(true);
       } catch (e) {
-        handleError(e, "FACTORY"); // <--- QUI
+        handleError(e, "FACTORY");
       } finally {
         setBusy(false);
       }
-    };
-    
-  
+  };
    
   const handleCancel = async (item) => {
-    await performAction(async () => {
+    setBusy(true);
+    try {
       const roleUrl = getRoleBaseUrl(role);
-    
-      await FF.watchMarket.invoke.cancelListing(roleUrl, { 
-        tokenId: item.tokenId 
-      });
-      
-    }, "L'orologio è stato ritirato dal mercato e riportato nel tuo inventario.", "MARKET");
+      await FF.watchMarket.invoke.cancelListing(roleUrl, { tokenId: item.tokenId }, { key: address });
+      openSuccess("L'orologio è stato ritirato dal mercato.");
+      refreshInventory(true);
+    } catch (e) {
+      handleError(e, "MARKET");
+    } finally {
+      setBusy(false);
+    }
   };
-  
 
   const handleWithdraw = async () => {
       setBusy(true);
       try {
         const roleUrl = getRoleBaseUrl(role);
-        await FF.watchMarket.invoke.withdraw(roleUrl, {});
+        await FF.watchMarket.invoke.withdraw(roleUrl, {}, { key: address});
         openSuccess("LUX prelevati con successo!");
         refreshWallet();
       } catch (e) {
@@ -299,21 +321,14 @@ const handleList = async (item, priceLuxInput) => {
       } finally {
         setBusy(false);
       }
-    };
-
-
-
+  };
 
   const handleToggleSystem = async (system, currentStatus) => {
     setBusy(true);
     try {
       const roleUrl = getRoleBaseUrl(role);
       const targetApi = (system === 'market') ? FF.watchMarket : FF.watchNft; 
-      
-      await targetApi.invoke.setEmergencyStop(roleUrl, {
-        status: !currentStatus 
-      }); 
-
+      await targetApi.invoke.setEmergencyStop(roleUrl, { status: !currentStatus }, { key: address }); 
       forceRefresh();
       openSuccess(`Sistema ${system === 'market' ? 'Mercato' : 'Factory'} aggiornato!`);
       closeModals();
@@ -324,15 +339,14 @@ const handleList = async (item, priceLuxInput) => {
     }
   };
 
-
   const formattedCredits = formatLux(pendingBalance); 
   const canWithdraw = pendingBalance !== "0" && pendingBalance !== "";
 
   return (
     <AppShell title="Watchain">
-      
       <div className="grid gap-8 lg:grid-cols-12 items-start">
         
+        {/* SIDEBAR PROFILO */}
         <div className="lg:col-span-4 space-y-6">
           <div className="rounded-3xl bg-[#4A0404] text-[#FDFBF7] p-8 shadow-xl sticky top-28 border border-[#5e0a0a]">
             <div className="text-3xl font-serif font-bold tracking-wide mb-6">Il tuo Profilo</div>
@@ -361,7 +375,6 @@ const handleList = async (item, priceLuxInput) => {
                   <div className="text-[#D4AF37] text-xs uppercase tracking-wider font-bold mb-1 flex items-center gap-1">
                     <BanknotesIcon className="h-4 w-4" /> Vendite da Incassare
                   </div>
-                  
                   <div className="text-white text-xl font-bold mb-3">
                      {formattedCredits} LUX 
                   </div>
@@ -381,15 +394,9 @@ const handleList = async (item, priceLuxInput) => {
                     <div className="text-[#D4AF37] text-xs font-bold uppercase tracking-widest mb-3 flex items-center gap-2 opacity-80">
                         <WrenchScrewdriverIcon className="h-4 w-4"/> Admin Tools
                     </div>
-                    
-                    <button 
-                        onClick={() => setModals(p => ({...p, reseller: true}))} 
-                        className="w-full flex items-center justify-between p-3 rounded-xl bg-[#4A0404] border border-[#D4AF37]/30 hover:border-[#D4AF37] hover:bg-[#5e0a0a] transition-all group shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]">
-                        
-                        <span className="text-sm font-bold flex items-center gap-2">
-                          <UsersIcon className="h-5 w-5 text-red-200"/> Gestisci Reseller</span>
+                    <button onClick={() => setModals(p => ({...p, reseller: true}))} className="w-full flex items-center justify-between p-3 rounded-xl bg-[#4A0404] border border-[#D4AF37]/30 hover:border-[#D4AF37] hover:bg-[#5e0a0a] transition-all group">
+                        <span className="text-sm font-bold flex items-center gap-2"><UsersIcon className="h-5 w-5 text-red-200"/> Gestisci Reseller</span>
                     </button>
-                    
                     <button onClick={() => setModals(p => ({...p, security: true}))} className="w-full flex items-center justify-between p-3 rounded-xl bg-[#5e0a0a] hover:bg-[#700c0c] transition border border-white/5 group">
                         <span className="text-sm font-bold flex items-center gap-2"><ShieldCheckIcon className="h-5 w-5 text-red-200"/> Sicurezza & Emergenza</span>
                     </button>
@@ -398,6 +405,7 @@ const handleList = async (item, priceLuxInput) => {
           </div>
         </div>
 
+        {/* GRIGLIA INVENTARIO */}
         <div className="lg:col-span-8 space-y-6">
           <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 border-b border-[#4A0404]/10 pb-4">
             <div>
@@ -405,7 +413,7 @@ const handleList = async (item, priceLuxInput) => {
                 {role === "producer" ? "Vault Produzione" : "La tua Collezione"}
               </div>
               <div className="text-[#4A0404]/60 text-sm mt-1">
-                {role === "producer" ? "Gestisci e conia nuovi orologi." : "Visualizza i tuoi acquisti."}
+                {role === "producer" ? "Gestisci e conia nuovi orologi." : "Visualizza i tuoi acquisti e le vendite in corso."}
               </div>
             </div>
             
@@ -414,21 +422,20 @@ const handleList = async (item, priceLuxInput) => {
                    <button 
                      onClick={() => openConfirm("Nuovo Orologio", "Vuoi coniare un nuovo orologio?", handleMint)}
                      disabled={busy}
-                     title="Conia Nuovo Orologio"
                      className="flex items-center gap-2 px-5 py-2.5 bg-[#4A0404] border border-[#D4AF37]/30 text-[#D4AF37] font-bold rounded-xl shadow-lg hover:bg-[#5e0a0a] hover:border-[#D4AF37] disabled:opacity-50 transition"
                    >
                       <PlusIcon className="h-5 w-5"/> Mint
                    </button>
                )}
                <button onClick={() => refreshInventory(false)} disabled={loadingInventory} className="p-2.5 bg-[#4A0404] border border-[#D4AF37]/30 rounded-xl text-[#D4AF37] hover:bg-[#5e0a0a] hover:border-[#D4AF37] transition shadow-lg disabled:opacity-50">
-                  <ArrowPathIcon title="Aggiorna Inventario" className={`h-5 w-5 ${loadingInventory ? 'animate-spin' : ''}`}/>
+                  <ArrowPathIcon className={`h-5 w-5 ${loadingInventory ? 'animate-spin' : ''}`}/>
                </button>
             </div>
           </div>
 
           {inventory.length === 0 ? (
             <div className="rounded-3xl border-2 border-dashed border-[#4A0404]/20 bg-[#FDFBF7] p-12 text-center text-[#4A0404]/50 font-serif italic">
-              {loadingInventory ? "Caricamento..." : "Nessun orologio trovato."}
+              {loadingInventory ? "Ricerca in blockchain..." : "Nessun orologio trovato."}
             </div>
           ) : (
             <div className="grid gap-6 sm:grid-cols-2 xl:grid-cols-3">
@@ -452,8 +459,10 @@ const handleList = async (item, priceLuxInput) => {
         item={selected} 
         role={role} 
         busy={busy}
+        // Funzioni collegate:
         onList={(item, p) => openConfirm("Metti in Vendita", `Prezzo: ${p} LUX. Confermi?`, () => handleList(item, p))}
-        onCancel={(item) => openConfirm("Ritira Orologio", "Vuoi annullare la vendita?", () => handleCancel(item))}
+        onUpdatePrice={(item, p) => openConfirm("Modifica Prezzo", `Nuovo prezzo: ${p} LUX. Confermi?`, () => handleUpdatePrice(item, p))}
+        onCancel={(item) => openConfirm("Ritira Orologio", "Vuoi annullare la vendita e ritirare l'orologio dal Mercato?", () => handleCancel(item))}
         onCertify={(item) => openConfirm("Certificazione", "Emettere certificato di autenticità?", () => handleCertify(item))}
       />
       

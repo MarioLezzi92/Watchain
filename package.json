@@ -1,7 +1,6 @@
 {
   "name": "Watchain",
   "version": "1.0.0",
-  "type": "module",
   "devDependencies": {
     "@nomicfoundation/hardhat-toolbox": "^5.0.0",
     "@types/node": "^20.0.0",

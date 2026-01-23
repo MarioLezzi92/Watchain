@@ -1,89 +1,40 @@
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
+import { env } from "../off-chain/env.js"; 
+
+// Configurazione dinamica dal file env
+const FF_BASE = env.FF_PRODUCER_BASE;
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-
 const PROJECT_ROOT = path.resolve(__dirname, ".."); 
-// Definizione dei percorsi per entrambi i file .env
-const BACKEND_ENV_PATH = path.join(PROJECT_ROOT, "backend", ".env");
-const FRONTEND_ENV_PATH = path.join(PROJECT_ROOT, "frontend", ".env");
 
+// Percorsi degli artifacts generati da Hardhat/Truffle
 const ARTIFACTS = {
   LuxuryCoin: path.join(PROJECT_ROOT, "artifacts", "contracts", "LuxuryCoin.sol", "LuxuryCoin.json"),
   WatchNFT: path.join(PROJECT_ROOT, "artifacts", "contracts", "WatchNFT.sol", "WatchNFT.json"),
   WatchMarket: path.join(PROJECT_ROOT, "artifacts", "contracts", "WatchMarket.sol", "WatchMarket.json"),
 };
 
-function die(msg) {
-  console.error(`❌ FATAL: ${msg}`);
-  process.exit(1);
-}
-
-function isHexAddress(s) {
-  return typeof s === "string" && /^0x[a-fA-F0-9]{40}$/.test(s.trim());
-}
-
-function readEnvFile(envPath) {
-  if (!fs.existsSync(envPath)) return {};
-  const txt = fs.readFileSync(envPath, "utf8");
-  const out = {};
-  for (const line of txt.split(/\r?\n/)) {
-    const l = line.trim();
-    if (!l || l.startsWith("#")) continue;
-    const idx = l.indexOf("=");
-    if (idx === -1) continue;
-    const k = l.slice(0, idx).trim();
-    const v = l.slice(idx + 1).trim();
-    out[k] = v;
-  }
-  return out;
-}
-
-function upsertEnvVars(envPath, newVars) {
-  let content = fs.existsSync(envPath) ? fs.readFileSync(envPath, "utf8") : "";
-  const lines = content.split(/\r?\n/);
-  const found = new Set();
-  
-  // Aggiorna le righe esistenti
-  const updated = lines.map((line) => {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith("#")) return line;
-    const idx = trimmed.indexOf("=");
-    if (idx === -1) return line;
-    const key = trimmed.slice(0, idx);
-    if (key in newVars) {
-      found.add(key);
-      return `${key}=${newVars[key]}`;
-    }
-    return line;
-  });
-
-  // Aggiungi le nuove variabili se non trovate
-  for (const [k, v] of Object.entries(newVars)) {
-    if (!found.has(k)) updated.push(`${k}=${v}`);
-  }
-  
-  fs.writeFileSync(envPath, updated.join("\n"), "utf8");
-}
+function die(msg) { console.error(`FATAL: ${msg}`); process.exit(1); }
+function isHexAddress(s) { return typeof s === "string" && /^0x[a-fA-F0-9]{40}$/.test(s.trim()); }
 
 function loadArtifact(p) {
-  if (!fs.existsSync(p)) die(`Artifact non trovato: ${p}`);
+  if (!fs.existsSync(p)) die(`Artifact non trovato in: ${p}`);
   const j = JSON.parse(fs.readFileSync(p, "utf8"));
   let bytecode = j.bytecode || (j.data && j.data.bytecode) || "";
   if (typeof bytecode === 'object') bytecode = bytecode.object;
   const abi = j.abi || j.definition;
   if (!bytecode.startsWith("0x")) bytecode = "0x" + bytecode;
-  if (!Array.isArray(abi) || abi.length === 0) die(`ABI mancante in: ${p}`);
   return { abi, bytecode };
 }
 
-async function ffPost(url, body) {
-  const res = await fetch(url, {
-    method: "POST",
+async function ffReq(method, endpoint, body) {
+  const res = await fetch(`${FF_BASE}${endpoint}`, {
+    method,
     headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
+    body: body ? JSON.stringify(body) : undefined,
   });
   const txt = await res.text();
   const json = txt ? JSON.parse(txt) : {};
@@ -91,130 +42,54 @@ async function ffPost(url, body) {
   return json;
 }
 
-async function ffGet(url) {
-  const res = await fetch(url);
-  const txt = await res.text();
-  const json = txt ? JSON.parse(txt) : {};
-  if (!res.ok) throw new Error(json?.error || txt);
-  return json;
-}
-
-async function getFireFlyAccounts(base) {
-  try {
-    const verifiers = await ffGet(`${base}/verifiers`);
-    return verifiers.filter(v => v.type === "ethereum_address").map(v => v.value).reverse(); 
-  } catch (e) {
-    return [];
-  }
-}
-
-async function waitOperation(base, opId) {
+async function waitOperation(opId) {
   const start = Date.now();
-  while (true) {
-    if (Date.now() - start > 300000) throw new Error(`Timeout operazione ${opId}`);
-    const op = await ffGet(`${base}/operations/${opId}`);
-    const status = String(op?.status || "").toLowerCase();
-    if (status === "succeeded") return op;
-    if (status === "failed") throw new Error(`Operazione fallita: ${JSON.stringify(op)}`);
-    await new Promise((r) => setTimeout(r, 1500));
+  while (Date.now() - start < 60000) { 
+    const op = await ffReq("GET", `/operations/${opId}`);
+    if (op.status === "Succeeded") return op;
+    if (op.status === "Failed") throw new Error(op.error || "Operazione fallita su FireFly");
+    await new Promise(r => setTimeout(r, 1000));
   }
+  throw new Error("Timeout: Il deploy sta impiegando troppo tempo.");
 }
 
-async function deployContract({ base, fromKey, name, artifactPath, inputArgs }) {
-  const { abi, bytecode } = loadArtifact(artifactPath);
-  console.log(`🚀 Deploying ${name}...`);
-
-  const resp = await ffPost(`${base}/contracts/deploy`, {
-    contract: bytecode, 
-    definition: abi,
-    input: inputArgs || [],
-    key: fromKey,
-  });
-
-  const op = await waitOperation(base, resp.id);
-  const addr = op?.receipt?.contractAddress || op?.output?.contractAddress || 
-               op?.receipt?.contractLocation?.address || op?.output?.contractLocation?.address;
-
-  if (!isHexAddress(addr)) throw new Error(`[${name}] Deploy riuscito ma indirizzo non trovato`);
+async function deployContract(name, artifactKey, args, fromKey) {
+  const { abi, bytecode } = loadArtifact(ARTIFACTS[artifactKey]);
+  console.log(`📦 Deploying ${name}...`);
   
-  console.log(`✅ ${name} all'indirizzo: ${addr}`);
+  const res = await ffReq("POST", "/contracts/deploy", {
+    contract: bytecode, definition: abi, input: args || [], key: fromKey
+  });
+  const op = await waitOperation(res.id);
+  const addr = op.output.contractLocation.address;
+  
+  if (!isHexAddress(addr)) throw new Error("Indirizzo ricevuto non valido");
+  
+  console.log(`✅ ${name} distribuito a: ${addr}`);
   return addr;
 }
 
 async function main() {
-  const env = readEnvFile(BACKEND_ENV_PATH);
-  const base = env.FF_PRODUCER_BASE;
-  if (!base) die("FF_PRODUCER_BASE mancante in backend/.env");
+  console.log("🚀 Avvio processo di deployment su rete Geth...");
 
-  const accounts = await getFireFlyAccounts(base);
-  
-  const producerAddr = accounts[0];
-  const resellerAddr = accounts[1];
-  const consumerAddr = accounts[2];
+  // 1. Recupero degli account configurati in FireFly
+  const verifiers = await ffReq("GET", "/verifiers?type=ethereum_address&limit=3");
+  const accounts = verifiers.map(v => v.value).reverse(); 
+  if (accounts.length < 3) die("Errore: FireFly deve avere almeno 3 account configurati (Producer, Reseller, Consumer).");
 
-  if (!producerAddr || !resellerAddr || !consumerAddr) {
-    console.warn(`⚠️ ATTENZIONE: Trovati solo ${accounts.length} account. Assicurati che lo stack sia attivo.`);
-  }
+  const [producer, reseller, consumer] = accounts;
+  console.log(`Account Producer: ${producer}`);
 
-  console.log("=== 🛠️  START DEPLOY ONLY ===");
-  console.log(`📡 Nodo FireFly: ${base}`);
-  console.log(`👤 Producer: ${producerAddr}`);
-  console.log(`👤 Reseller: ${resellerAddr}`);
-  console.log(`👤 Consumer: ${consumerAddr}\n`);
+  // 2. Deploy della sequenza di contratti
+  const coinAddr = await deployContract("LuxuryCoin", "LuxuryCoin", [reseller, consumer], producer);
+  const nftAddr = await deployContract("WatchNFT", "WatchNFT", [producer], producer);
+  const marketAddr = await deployContract("WatchMarket", "WatchMarket", [coinAddr, nftAddr], producer);
 
-  // 1. LuxuryCoin
-  const luxAddr = await deployContract({
-    base, 
-    fromKey: producerAddr, 
-    name: "LuxuryCoin", 
-    artifactPath: ARTIFACTS.LuxuryCoin,
-    inputArgs: [resellerAddr || producerAddr, consumerAddr || producerAddr]
-  });
-
-  // 2. WatchNFT
-  const nftAddr = await deployContract({
-    base, 
-    fromKey: producerAddr, 
-    name: "WatchNFT", 
-    artifactPath: ARTIFACTS.WatchNFT,
-    inputArgs: [producerAddr],
-  });
-
-  // 3. WatchMarket
-  const marketAddr = await deployContract({
-    base, 
-    fromKey: producerAddr, 
-    name: "WatchMarket", 
-    artifactPath: ARTIFACTS.WatchMarket,
-    inputArgs: [luxAddr, nftAddr],
-  });
-
-  console.log("\n=== 📝 AGGIORNAMENTO ENV ===");
-  
-  // 1. Aggiornamento Backend
-  console.log("-> Backend .env");
-  upsertEnvVars(BACKEND_ENV_PATH, {
-    LUXURYCOIN_ADDRESS: luxAddr,
-    WATCHNFT_ADDRESS: nftAddr,
-    WATCHMARKET_ADDRESS: marketAddr,
-    PRODUCER_ADDR: producerAddr,
-    RESELLER_ADDR: resellerAddr,
-    CONSUMER_ADDR: consumerAddr
-  });
-
-  // 2. Aggiornamento Frontend (Con prefisso VITE_)
-  console.log("-> Frontend .env");
-  upsertEnvVars(FRONTEND_ENV_PATH, {
-    VITE_LUXURYCOIN_ADDRESS: luxAddr,
-    VITE_WATCHNFT_ADDRESS: nftAddr,
-    VITE_WATCHMARKET_ADDRESS: marketAddr,
-    VITE_PRODUCER_ADDR: producerAddr,
-    VITE_RESELLER_ADDR: resellerAddr,
-    VITE_CONSUMER_ADDR: consumerAddr
-  });
-
-  console.log("✅ File .env aggiornati con successo.");
-  console.log("Sincronizzazione completata.");
+  console.log("\n--- RECAP DEPLOYMENT ---");
+  console.log(`LuxuryCoin (ERC20):  ${coinAddr}`);
+  console.log(`WatchNFT (ERC721):   ${nftAddr}`);
+  console.log(`WatchMarket:         ${marketAddr}`);
+  console.log("------------------------\n");
 }
 
 main().catch(e => die(e.message));

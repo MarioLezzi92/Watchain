@@ -1,12 +1,11 @@
 import crypto from "crypto";
 import { ethers } from "ethers";
-import { env } from "../config/env.js";
-import { signJwt } from "../utils/jwt.js";
-
+import { env } from "../../env.js";
+import { signJwt } from "./jwt.js";
 
 const nonces = new Map();
 
-// Pulizia nonce scaduti
+// Pulizia automatica nonce scaduti (uguale a prima)
 setInterval(() => {
   const now = Date.now();
   for (const [addr, entry] of nonces.entries()) {
@@ -33,13 +32,14 @@ export async function verifyLogin(address, signature) {
   const addr = String(address).toLowerCase();
   const entry = nonces.get(addr);
 
+  // 1. Controlli sicurezza (Anti-Replay)
   if (!entry) throw new Error("Nonce non trovato.");
   if (Date.now() > entry.exp) {
     nonces.delete(addr);
     throw new Error("Nonce scaduto.");
   }
 
-  // Verifica della firma 
+  // 2. Verifica Crittografica della Firma
   const message = `Login to Watchchain\nNonce: ${entry.nonce}`;
   let recovered;
   try {
@@ -52,19 +52,12 @@ export async function verifyLogin(address, signature) {
     throw new Error("Firma non valida: autenticazione fallita.");
   }
 
-  const PRODUCER = String(env.PRODUCER_ADDR || "").toLowerCase().trim();
-  const RESELLER_ENV = String(env.RESELLER_ADDR || "").toLowerCase().trim();
-
-  let role = "consumer"; 
-
-  if (addr === PRODUCER) {
-    role = "producer";
-  } else if (addr === RESELLER_ENV) {
-    role = "reseller";
-  } 
+  // 3. PULIZIA TOTALE: Niente più logica ruoli qui.
+  // Il backend certifica solo che "Tu sei chi dici di essere".
   
   nonces.delete(addr);
-  const token = signJwt({ account: addr, role: role });
 
-  return { token, role, address: addr };
+  const token = signJwt({ sub: addr }); 
+
+  return { token, address: addr };
 }

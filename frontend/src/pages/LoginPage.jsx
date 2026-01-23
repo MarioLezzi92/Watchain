@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { useNavigate } from "react-router-dom"; 
-import { AuthAPI } from "../lib/api";
+import { AuthAPI, FF, FF_BASE } from "../lib/api"; // Importiamo FF e FF_BASE
 import { saveSession } from "../lib/auth"; 
 import { useWallet } from "../context/WalletContext"; 
 import { useSystem } from "../context/SystemContext"; 
@@ -20,38 +20,64 @@ export default function Login() {
       if (!window.ethereum) throw new Error("MetaMask non trovato.");
 
       // 1. Richiediamo l'account ATTIVO su MetaMask
-      // Se l'account non è connesso, MetaMask aprirà il popup per connetterlo.
       const accounts = await window.ethereum.request({ method: "eth_requestAccounts" });
       
       if (!accounts || accounts.length === 0) {
         throw new Error("Nessun account selezionato.");
       }
 
-      const address = accounts[0]; // L'account che hai scelto in MetaMask
+      const address = accounts[0]; 
 
-      // 2. Otteniamo il Nonce
+      // 2. Otteniamo il Nonce dal Backend
       const resNonce = await AuthAPI.nonce(address); 
       const nonce = resNonce?.nonce; 
       const message = resNonce?.message;  
 
       if (!nonce) throw new Error("Errore: Nonce non ricevuto.");
       
-      // 3. Firma
+      // 3. Firma con MetaMask
       const signature = await window.ethereum.request({
         method: "personal_sign",
         params: [message, address],
       });
 
-      // 4. Login Backend
+      // 4. Login Backend (Riceviamo solo il Token, NIENTE ruolo)
       const resLogin = await AuthAPI.login(address, signature);
-      const { token, role } = resLogin;
+      const { token } = resLogin;
 
-      if (!token || !role) throw new Error("Login fallito.");
+      if (!token) throw new Error("Login fallito: Token non ricevuto.");
 
-      // 5. Salvataggio Sessione
-      saveSession(token, address, role);
+      // --- 5. LOGICA DECENTRALIZZATA: Chiediamo il ruolo alla Blockchain ---
+      // Usiamo il nodo Producer come fonte pubblica di lettura
+      const readNode = FF_BASE.producer; 
+      
+      // Eseguiamo due query in parallelo per velocità:
+      const [factoryRes, resellerRes, knownRes] = await Promise.all([
+        FF.watchNft.query.factory(readNode),
+        FF.watchNft.query.reseller(readNode, { "": address }),
+        FF.watchNft.query.knownReseller(readNode, { "": address }) 
+      ]);
+      
+      const factoryAddr = String(factoryRes.output || "").toLowerCase();
+      const isActiveReseller = (resellerRes.output === true || String(resellerRes.output) === "true");
+      const isBusiness = isActiveReseller || (knownRes.output === true || String(knownRes.output) === "true");     
+      
+      const myAddr = String(address).toLowerCase();
 
-      // 6. Aggiornamento UI
+      let blockchainRole = "consumer"; // Ruolo di default
+
+      if (myAddr === factoryAddr) {
+        blockchainRole = "producer";
+      } else if (isBusiness) {
+        blockchainRole = "reseller";
+      }
+
+      console.log(`Ruolo assegnato: ${blockchainRole} (Active: ${isActiveReseller})`);
+
+      // 6. Salvataggio Sessione con il ruolo reale
+      saveSession(token, address, blockchainRole);
+
+      // 7. Aggiornamento UI e redirect
       await refreshWallet(); 
       forceRefresh(); 
       
@@ -59,7 +85,6 @@ export default function Login() {
 
     } catch (e) {
       console.error("Login Error:", e);
-      // Gestione errore "User rejected"
       if (e.code === 4001) {
         setErr("Connessione annullata dall'utente.");
       } else {

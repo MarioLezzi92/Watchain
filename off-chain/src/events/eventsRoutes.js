@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { fireflyWebhook } from "../controllers/eventsController.js";
+import { fireflyWebhook } from "./eventsController.js";
 
 const router = Router();
 router.post("/webhook", fireflyWebhook);

@@ -1,37 +1,39 @@
 import React, { useState, useEffect } from "react";
-import { XMarkIcon, CheckBadgeIcon } from "@heroicons/react/24/outline";
+import { XMarkIcon, CheckBadgeIcon, CurrencyDollarIcon } from "@heroicons/react/24/outline";
 import { useWallet } from "../../context/WalletContext"; 
 
-export default function WatchDetailsModal({ open, onClose, item, role, onList, onCancel, onBuy, onCertify, busy }) {
+export default function WatchDetailsModal({ open, onClose, item, role, onList, onCancel, onBuy, onUpdatePrice, onCertify, busy }) {
   const [inputPrice, setInputPrice] = useState("");
+  const [updatePriceValue, setUpdatePriceValue] = useState(""); // Nuovo stato per l'aggiornamento
   
-  // dato reattivo dal Context
   const { address } = useWallet(); 
 
   useEffect(() => {
-    if (open) setInputPrice("");
+    if (open) {
+        setInputPrice("");
+        setUpdatePriceValue("");
+    }
   }, [open, item]);
 
   if (!open || !item) return null;
 
   const isListed = item.priceLux !== null;
   
-  // Normalizzazione indirizzi per il confronto sicuro
   const myAddress = (address || "").toLowerCase();
   const itemSeller = (item.seller || "").toLowerCase();
   const itemOwner = (item.owner || "").toLowerCase();
 
-  // Logica Ownership:
-  // Se è listato, il vero proprietario (ai fini UI) è il seller (chi lo sta vendendo).
-  // Se non è listato, è l'owner registrato nel contratto.
+  // Logica Ownership con Escrow:
+  // Se è listato, l'owner on-chain è il Market, ma visivamente è il seller.
   const effectiveOwner = (isListed && itemSeller && itemSeller !== "0x0000000000000000000000000000000000000000") 
     ? itemSeller 
     : itemOwner;
 
   const isMine = effectiveOwner === myAddress;
-  const canManage = (myAddress === itemSeller) || (myAddress === itemOwner);
+  const canManage = isMine; 
   
-  // Un reseller può certificare solo se possiede l'orologio, non è certificato e non è in vendita
+  // Logica permessi:
+  // 1. Certificazione: Solo reseller, oggetto mio, non certificato, non in vendita
   const canCertify = role === 'reseller' && isMine && !item.certified && !isListed;
 
   return (
@@ -96,7 +98,7 @@ export default function WatchDetailsModal({ open, onClose, item, role, onList, o
             {canManage && (
               <div className="space-y-4">
                 
-                {/* 1. CERTIFICAZIONE (Solo Reseller) */}
+                {/* A. CERTIFICAZIONE (Solo Reseller) */}
                 {canCertify && (
                    <button
                      onClick={() => onCertify && onCertify(item)}
@@ -107,7 +109,7 @@ export default function WatchDetailsModal({ open, onClose, item, role, onList, o
                    </button>
                 )}
 
-                {/* 2. VENDITA (List Primary / Secondary) */}
+                {/* B. VENDITA (Nuovo Listing) */}
                 {(!isListed && (role === 'producer' || (role === 'reseller' && item.certified))) && (
                   <div className="bg-[#f2e9d0] p-4 rounded-xl shadow-inner border border-[#D4AF37]/30">
                     <label className="block text-[#4A0404] text-xs font-bold uppercase tracking-widest mb-2">
@@ -116,19 +118,11 @@ export default function WatchDetailsModal({ open, onClose, item, role, onList, o
                     <div className="flex gap-2">
                       <input
                         type="number"
-                        min="0" // Impedisce di scendere sotto zero con le freccette
+                        min="0"
                         placeholder="Ex: 100"
                         value={inputPrice}
-                        // Impedisce di digitare il segno meno
-                        onKeyDown={(e) => {
-                            if (e.key === "-" || e.key === "e") e.preventDefault();
-                        }}
-                        onChange={(e) => {
-                            // Se il valore è vuoto o positivo, aggiorna lo stato
-                            if (e.target.value === "" || parseFloat(e.target.value) >= 0) {
-                                setInputPrice(e.target.value);
-                            }
-                        }}
+                        onKeyDown={(e) => { if (e.key === "-" || e.key === "e") e.preventDefault(); }}
+                        onChange={(e) => { if (e.target.value === "" || parseFloat(e.target.value) >= 0) setInputPrice(e.target.value); }}
                         className="w-full bg-white text-[#4A0404] font-bold p-3 rounded-xl border border-[#D4AF37]/20 focus:outline-none focus:ring-2 focus:ring-[#D4AF37]"
                       />
                       <button
@@ -142,19 +136,45 @@ export default function WatchDetailsModal({ open, onClose, item, role, onList, o
                   </div>
                 )}
                 
-                {/* Messaggio per Reseller che non possono vendere orologi non certificati */}
+                {/* Warning per Reseller non certificato */}
                 {(!isListed && role === 'reseller' && !item.certified) && (
                    <div className="text-center text-[#D4AF37] text-xs italic bg-black/20 p-2 rounded-lg">
                       ⚠️ Devi certificare l'orologio prima di poterlo vendere.
                    </div>
                 )}
 
-                {/* 3. CANCELLA LISTING */}
+                {/* C. GESTIONE LISTING ESISTENTE (Update Price + Cancel) */}
                 {isListed && (
-                  <div>
-                    <div className="text-center mb-2 text-white/50 text-xs italic">
-                      Per modificare il prezzo, ritira l'orologio e rimettilo in vendita.
+                  <div className="bg-black/20 p-4 rounded-xl border border-white/10 space-y-3">
+                    
+                    {/* Update Price Input */}
+                    <div>
+                        <label className="block text-white/50 text-[10px] uppercase font-bold tracking-widest mb-1">
+                            Modifica Prezzo
+                        </label>
+                        <div className="flex gap-2">
+                            <input
+                                type="number"
+                                min="0"
+                                placeholder="New Price"
+                                value={updatePriceValue}
+                                onKeyDown={(e) => { if (e.key === "-" || e.key === "e") e.preventDefault(); }}
+                                onChange={(e) => { if (e.target.value === "" || parseFloat(e.target.value) >= 0) setUpdatePriceValue(e.target.value); }}
+                                className="w-full bg-black/40 text-white font-bold p-2 rounded-lg border border-white/10 focus:outline-none focus:border-[#D4AF37]"
+                            />
+                            <button
+                                onClick={() => onUpdatePrice && onUpdatePrice(item, updatePriceValue)}
+                                disabled={!updatePriceValue || busy}
+                                className="px-4 bg-[#D4AF37]/20 hover:bg-[#D4AF37] text-[#D4AF37] hover:text-[#4A0404] font-bold rounded-lg border border-[#D4AF37] transition disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-[#D4AF37]"
+                            >
+                                <CurrencyDollarIcon className="h-5 w-5" />
+                            </button>
+                        </div>
                     </div>
+
+                    <div className="w-full h-px bg-white/10 my-2"></div>
+
+                    {/* Cancel Button */}
                     <button
                       onClick={() => onCancel && onCancel(item)}
                       disabled={busy}
@@ -167,7 +187,7 @@ export default function WatchDetailsModal({ open, onClose, item, role, onList, o
               </div>
             )}
 
-            {/* 4. COMPRA (Se non sono il proprietario) */}
+            {/* D. COMPRA (Se non sono il proprietario) */}
             {!canManage && isListed && (
               <button
                 onClick={() => onBuy && onBuy(item)}

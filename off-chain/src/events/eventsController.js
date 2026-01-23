@@ -1,10 +1,9 @@
-import { env } from "../config/env.js"; 
-import { unwrapFF } from "../utils/formatters.js";
+import { env } from "../../env.js"; 
 
 export function fireflyWebhook(req, res) {
   try {
-    // Protezione semplice via shared secret (header scelto da te)
-    const incoming = req.headers["x-watchchain-secret"];
+    // Protezione semplice via shared secret
+    const incoming = req.headers["x-watchain-secret"];
     if (incoming !== env.WEBHOOK_SECRET) {
       return res.status(403).json({ ack: false, error: "Forbidden" });
     }
@@ -18,6 +17,7 @@ export function fireflyWebhook(req, res) {
     if (!name) return;
 
     const out = be.output || {};
+    
     const data = {
       eventType: name,
       tokenId: unwrapFF(out.tokenId),
@@ -27,13 +27,18 @@ export function fireflyWebhook(req, res) {
       raw: body,
     };
 
-    // Push live
+    // Push live via Socket.io
     const io = req.app.get("io");
-    
     if (io) {
       io.emit("refresh", data);
     }
   } catch (e) {
     console.error("Webhook error:", e);
   }
+}
+
+function unwrapFF(x) {
+  if (x == null) return null;
+  if (typeof x === "object" && "value" in x) return x.value;
+  return x;
 }

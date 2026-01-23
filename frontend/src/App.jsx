@@ -2,8 +2,8 @@ import React from "react";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import ProtectedRoute from "./app/ProtectedRoute";
 import Login from "./pages/LoginPage";
-import MarketPage from "./pages/MarketPage"; 
-import MePage from "./pages/MePage";         
+import MarketPage from "./pages/MarketPage";
+import MePage from "./pages/MePage";
 
 export default function App() {
   return (
@@ -12,10 +12,15 @@ export default function App() {
         <Route path="/login" element={<Login />} />
         <Route path="/" element={<Navigate to="/market" replace />} />
 
-        {/* Market è pubblico o per tutti i loggati */}
-        <Route path="/market" element={<MarketPage />} />
+        <Route
+          path="/market"
+          element={
+            <ProtectedRoute>
+              <MarketPage />
+            </ProtectedRoute>
+          }
+        />
 
-        {/* MePage è protetta: devi essere loggato */}
         <Route
           path="/me"
           element={

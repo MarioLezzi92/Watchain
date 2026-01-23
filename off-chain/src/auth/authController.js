@@ -1,5 +1,4 @@
-import { generateNonce, verifyLogin } from "../services/authService.js";
-import { env } from "../config/env.js"; 
+import { generateNonce, verifyLogin } from "./authService.js";
 
 export function getNonce(req, res) {
   try {
@@ -11,11 +10,10 @@ export function getNonce(req, res) {
   }
 }
 
-
 export async function login(req, res) {
   try {
     const { address, signature } = req.body || {};
-    const result = await verifyLogin(address, signature); 
+    const result = await verifyLogin(address, signature);
     return res.json({ success: true, ...result });
   } catch (e) {
     console.error("Login Error:", e.message);
@@ -27,19 +25,7 @@ export function logout(req, res) {
   return res.json({ success: true, message: "Logged out" });
 }
 
-
-export async function checkReseller(req, res) {
-  try {
-    const { address } = req.body || {};
-    if (!address) throw new Error("Address mancante");
-    
-    const cleanAddr = String(address).trim().toLowerCase();
-    const resellerEnv = String(env.RESELLER_ADDR || "").trim().toLowerCase();
-    
-    const isAuthorized = (cleanAddr === resellerEnv);
-
-    return res.json({ success: true, isAuthorized });
-  } catch (e) {
-    return res.status(400).json({ success: false, error: e.message });
-  }
+// rotta protetta per verificare che il JWT sia valido
+export function me(req, res) {
+  return res.json({ success: true, address: req.user.address });
 }

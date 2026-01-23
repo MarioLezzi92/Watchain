@@ -9,13 +9,11 @@ contract WatchNFT is ERC721, Ownable, EmergencyStop {
     uint256 public nextId;
     address public immutable factory;
 
-    // Mapping per i ruoli
-    mapping(address => bool) public reseller;
-    
-   
-    mapping(address => bool) public knownReseller; 
+    // Ruoli
+    mapping(address => bool) public reseller;        // attivo ora
+    mapping(address => bool) public knownReseller;   // sticky: è stato reseller almeno una volta
 
-    // FIX FIREFLY: Usiamo private + funzione manuale per evitare l'errore FF10304
+    // FIX FIREFLY: private + getter manuale
     mapping(uint256 => bool) private _certified;
 
     event ResellerEnabled(address indexed who);
@@ -39,15 +37,23 @@ contract WatchNFT is ERC721, Ownable, EmergencyStop {
     }
 
     function setEmergencyStop(bool status) external onlyOwner {
-        if (status) _pause(); else _unpause();
+        if (status) _pause();
+        else _unpause();
     }
+
+
 
     function setReseller(address who, bool enabled) external onlyOwner {
         require(who != address(0), "reseller=0");
-        reseller[who] = enabled; 
-        
-        // Logica KnownReseller (serve al Market per non bloccare gli ex-reseller)
+        require(who != factory, "factory cannot be reseller");
+
+        // evita operazioni inutili
+        require(reseller[who] != enabled, "No state change");
+
+        reseller[who] = enabled;
+
         if (enabled) {
+            // una volta business, resta business
             knownReseller[who] = true;
             emit ResellerEnabled(who);
         } else {
@@ -55,25 +61,22 @@ contract WatchNFT is ERC721, Ownable, EmergencyStop {
         }
     }
 
-    function manufacture(address to) external onlyFactory whenNotPaused returns (uint256 tokenId) {
-        require(to != address(0), "to=0");
+
+    //  il producer minta sempre e solo a se stesso (factory)
+    function manufacture() external onlyFactory whenNotPaused returns (uint256 tokenId) {
         tokenId = ++nextId;
-        _safeMint(to, tokenId);
-        emit Manufactured(tokenId, to);
+        _safeMint(factory, tokenId);
+        emit Manufactured(tokenId, factory);
     }
 
-    // FIX FIREFLY: Funzione manuale con nome argomento ESPLICITO
-    // Questo risolve l'errore "Missing required input argument"
     function certified(uint256 tokenId) external view returns (bool) {
         return _certified[tokenId];
     }
 
     function certify(uint256 tokenId) external onlyReseller whenNotPaused {
         require(ownerOf(tokenId) == msg.sender, "Must own watch to certify");
-        
-        // Usiamo la variabile privata interna
         require(!_certified[tokenId], "Already certified");
-        
+
         _certified[tokenId] = true;
         emit Certified(tokenId, msg.sender);
     }

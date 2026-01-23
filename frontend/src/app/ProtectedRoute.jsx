@@ -25,7 +25,7 @@ export default function ProtectedRoute({ children, allowedRoles }) {
   // 3. Controllo Permessi: se la rotta è solo per "producer" e tu sei "consumer".
   if (allowedRoles && !allowedRoles.includes(role)) {
     // Se non hai i permessi, ti rimandiamo al mercato invece che al login
-    return <Navigate to="/market" replace />;
+    return <Navigate to="/login" replace />;
   }
 
   // Se tutto è okay, visualizza la pagina richiesta
