@@ -1,11 +1,13 @@
 import crypto from "crypto";
 import { ethers } from "ethers";
 import { env } from "../../env.js";
-import { signJwt } from "./jwt.js";
+import { signAccessJwt, signRefreshJwt, verifyRefreshJwt } from "./jwt.js";
 
 const nonces = new Map();
 
-// Pulizia automatica nonce scaduti (uguale a prima)
+// refresh token store in-memory (per le slide va bene; in prod: DB/redis)
+const refreshStore = new Map(); // address -> currentJti
+
 setInterval(() => {
   const now = Date.now();
   for (const [addr, entry] of nonces.entries()) {
@@ -17,6 +19,14 @@ function makeNonce() {
   return crypto.randomBytes(16).toString("hex");
 }
 
+function makeJti() {
+  return crypto.randomBytes(16).toString("hex");
+}
+
+function makeCsrf() {
+  return crypto.randomBytes(32).toString("hex");
+}
+
 export function generateNonce(address) {
   if (!address) throw new Error("Address mancante");
   const addr = String(address).toLowerCase();
@@ -25,21 +35,19 @@ export function generateNonce(address) {
   return nonce;
 }
 
-// --- VERIFY LOGIN ---
+// login: verifica firma, emette access+refresh, salva jti (rotation-ready)
 export async function verifyLogin(address, signature) {
   if (!address || !signature) throw new Error("Dati mancanti");
 
   const addr = String(address).toLowerCase();
   const entry = nonces.get(addr);
 
-  // 1. Controlli sicurezza (Anti-Replay)
   if (!entry) throw new Error("Nonce non trovato.");
   if (Date.now() > entry.exp) {
     nonces.delete(addr);
     throw new Error("Nonce scaduto.");
   }
 
-  // 2. Verifica Crittografica della Firma
   const message = `Login to Watchchain\nNonce: ${entry.nonce}`;
   let recovered;
   try {
@@ -52,12 +60,42 @@ export async function verifyLogin(address, signature) {
     throw new Error("Firma non valida: autenticazione fallita.");
   }
 
-  // 3. PULIZIA TOTALE: Niente più logica ruoli qui.
-  // Il backend certifica solo che "Tu sei chi dici di essere".
-  
   nonces.delete(addr);
 
-  const token = signJwt({ sub: addr }); 
+  const jti = makeJti();
+  refreshStore.set(addr, jti);
 
-  return { token, address: addr };
+  const accessToken = signAccessJwt(addr);
+  const refreshToken = signRefreshJwt(addr, jti);
+  const csrfToken = makeCsrf();
+
+  return { address: addr, accessToken, refreshToken, csrfToken };
+}
+
+// refresh: verifica refresh cookie + rotation
+export function refreshSession(refreshToken) {
+  if (!refreshToken) throw new Error("Missing refresh token");
+
+  const payload = verifyRefreshJwt(refreshToken);
+  const addr = String(payload?.sub || "").toLowerCase();
+  const jti = payload?.jti;
+
+  if (!addr || !jti) throw new Error("Invalid refresh token");
+  const current = refreshStore.get(addr);
+  if (!current || current !== jti) throw new Error("Refresh token revoked/rotated");
+
+  // rotate
+  const newJti = makeJti();
+  refreshStore.set(addr, newJti);
+
+  const accessToken = signAccessJwt(addr);
+  const newRefreshToken = signRefreshJwt(addr, newJti);
+  const csrfToken = makeCsrf();
+
+  return { address: addr, accessToken, refreshToken: newRefreshToken, csrfToken };
+}
+
+export function revokeRefresh(address) {
+  if (!address) return;
+  refreshStore.delete(String(address).toLowerCase());
 }

@@ -30,7 +30,7 @@ export function fireflyWebhook(req, res) {
     // Push live via Socket.io
     const io = req.app.get("io");
     if (io) {
-      io.emit("refresh", data);
+      io.emit("refresh");
     }
   } catch (e) {
     console.error("Webhook error:", e);

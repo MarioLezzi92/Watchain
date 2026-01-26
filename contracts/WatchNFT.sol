@@ -11,9 +11,7 @@ contract WatchNFT is ERC721, Ownable, EmergencyStop {
 
     // Ruoli
     mapping(address => bool) public reseller;        // attivo ora
-    mapping(address => bool) public knownReseller;   // sticky: è stato reseller almeno una volta
-
-    // FIX FIREFLY: private + getter manuale
+    mapping(address => bool) public activeReseller;   
     mapping(uint256 => bool) private _certified;
 
     event ResellerEnabled(address indexed who);
@@ -31,8 +29,8 @@ contract WatchNFT is ERC721, Ownable, EmergencyStop {
         _;
     }
 
-    modifier onlyReseller() {
-        require(reseller[msg.sender], "Only Active Reseller can do this");
+    modifier onlyActiveReseller() {
+        require(activeReseller[msg.sender], "Only Active Reseller can do this");
         _;
     }
 
@@ -42,21 +40,17 @@ contract WatchNFT is ERC721, Ownable, EmergencyStop {
     }
 
 
-
     function setReseller(address who, bool enabled) external onlyOwner {
         require(who != address(0), "reseller=0");
         require(who != factory, "factory cannot be reseller");
-
-        // evita operazioni inutili
-        require(reseller[who] != enabled, "No state change");
-
-        reseller[who] = enabled;
+        require(activeReseller[who] != enabled, "No state change");
 
         if (enabled) {
-            // una volta business, resta business
-            knownReseller[who] = true;
+            reseller[who] = true;
+            activeReseller[who] = true;
             emit ResellerEnabled(who);
         } else {
+            activeReseller[who] = false;
             emit ResellerDisabled(who);
         }
     }
@@ -73,7 +67,7 @@ contract WatchNFT is ERC721, Ownable, EmergencyStop {
         return _certified[tokenId];
     }
 
-    function certify(uint256 tokenId) external onlyReseller whenNotPaused {
+    function certify(uint256 tokenId) external onlyActiveReseller whenNotPaused {
         require(ownerOf(tokenId) == msg.sender, "Must own watch to certify");
         require(!_certified[tokenId], "Already certified");
 

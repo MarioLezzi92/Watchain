@@ -61,7 +61,7 @@ export function formatError(error, context = "GENERAL") {
   
   // --- ERRORI SPECIFICI WATCHMARKET / NFT ---
   if (msg.includes("market not approved")) return "APPROVAZIONE MANCANTE: Devi approvare il Market prima di mettere in vendita.";
-  if (msg.includes("only active reseller")) return "ACCESSO NEGATO: Solo i Rivenditori Autorizzati possono eseguire questa operazione.";
+  if (msg.includes("only active reseller")) return "OPERAZIONE NEGATA: Solo i Reseller Autorizzati possono eseguire questa operazione.";
   if (msg.includes("seller disabled")) return "ACQUISTO NEGATO: Stai provando ad acquistare da un Reseller non autorizzato.";
   if (msg.includes("not in escrow")) return "ERRORE CRITICO: L'orologio non è nell'Escrow del market.";
   if (msg.includes("not owner")) return "NON SEI IL PROPRIETARIO: Non possiedi questo orologio.";

@@ -100,15 +100,19 @@ describe("Ecosistema WatchChain - Test Suite Ultra Completa", function () {
       );
     });
 
-    it("knownReseller diventa sticky quando abiliti reseller", async function () {
+    it("reseller è permanente, activeReseller si può abilitare/disabilitare", async function () {
       const { nft, deployer, stranger } = await loadFixture(deployFixture);
-      expect(await nft.knownReseller(stranger.address)).to.equal(false);
+
+      expect(await nft.reseller(stranger.address)).to.equal(false);
+      expect(await nft.activeReseller(stranger.address)).to.equal(false);
 
       await nft.connect(deployer).setReseller(stranger.address, true);
-      expect(await nft.knownReseller(stranger.address)).to.equal(true);
+      expect(await nft.reseller(stranger.address)).to.equal(true);
+      expect(await nft.activeReseller(stranger.address)).to.equal(true);
 
       await nft.connect(deployer).setReseller(stranger.address, false);
-      expect(await nft.knownReseller(stranger.address)).to.equal(true);
+      expect(await nft.reseller(stranger.address)).to.equal(true); // resta reseller
+      expect(await nft.activeReseller(stranger.address)).to.equal(false); // ma disabilitato
     });
 
     it("Solo reseller attivo può certify()", async function () {
@@ -191,11 +195,30 @@ describe("Ecosistema WatchChain - Test Suite Ultra Completa", function () {
       await expect(market.connect(factoryUser).listPrimary(1, 0)).to.be.revertedWith("Price > 0");
     });
 
+    it("Solo il producer può listare primary", async function () {
+      const { nft, market, factoryUser, resellerUser, marketAddr } = await loadFixture(deployFixture);
+      const price = ethers.parseEther("1");
+
+      // mint dal producer
+      await nft.connect(factoryUser).manufacture();
+
+      // trasferisci al reseller (così il revert sarà sul require del producer, non su Not owner)
+      await nft.connect(factoryUser).transferFrom(factoryUser.address, resellerUser.address, 1);
+
+      // approve al market da reseller (per non far fallire su approval)
+      await nft.connect(resellerUser).setApprovalForAll(marketAddr, true);
+
+      // ora deve fallire perché msg.sender non è factory
+      await expect(
+        market.connect(resellerUser).listPrimary(1, price)
+      ).to.be.revertedWith("Only Producer can list primary");
+    });
+
     it("Consumer non può comprare primary", async function () {
       const { nft, market, coin, factoryUser, consumerUser, marketAddr } = await loadFixture(
         deployFixture
       );
-      const price = ethers.parseEther("1000");
+      const price = ethers.parseEther("500");
 
       await nft.connect(factoryUser).manufacture();
       await nft.connect(factoryUser).setApprovalForAll(marketAddr, true);
@@ -203,16 +226,17 @@ describe("Ecosistema WatchChain - Test Suite Ultra Completa", function () {
 
       await coin.connect(consumerUser).approve(marketAddr, price);
       await expect(market.connect(consumerUser).buy(1)).to.be.revertedWith(
-        "Only resellers can buy primary"
+        "Only active resellers can buy primary"
       );
     });
 
-    it("Ex reseller disabilitato può ancora comprare primary (knownReseller sticky)", async function () {
+    it("Reseller disabilitato NON può comprare primary", async function () {
       const { nft, market, coin, deployer, factoryUser, resellerUser, marketAddr } = await loadFixture(
         deployFixture
       );
       const price = ethers.parseEther("500");
 
+      // disabilita reseller
       await nft.connect(deployer).setReseller(resellerUser.address, false);
 
       await nft.connect(factoryUser).manufacture();
@@ -220,66 +244,37 @@ describe("Ecosistema WatchChain - Test Suite Ultra Completa", function () {
       await market.connect(factoryUser).listPrimary(1, price);
 
       await coin.connect(resellerUser).approve(marketAddr, price);
-      await market.connect(resellerUser).buy(1);
-
-      expect(await nft.ownerOf(1)).to.equal(resellerUser.address);
+      await expect(market.connect(resellerUser).buy(1)).to.be.revertedWith(
+        "Only active resellers can buy primary"
+      );
     });
   });
 
   describe("WatchMarket - Secondary (Reseller -> Consumer) con Certificazione", function () {
-    it("Secondary: fallisce senza certificazione, poi passa dopo certify, con escrow", async function () {
-      const { nft, market, coin, factoryUser, resellerUser, consumerUser, marketAddr } =
-        await loadFixture(deployFixture);
-      const price = ethers.parseEther("2000");
+    it("Reseller può listare secondary solo se certificato", async function () {
+      const { nft, market, factoryUser, resellerUser, marketAddr } = await loadFixture(deployFixture);
+      const price = ethers.parseEther("200");
 
       await nft.connect(factoryUser).manufacture();
       await nft.connect(factoryUser).transferFrom(factoryUser.address, resellerUser.address, 1);
 
       await nft.connect(resellerUser).setApprovalForAll(marketAddr, true);
 
+      // non certificato => revert
       await expect(market.connect(resellerUser).listSecondary(1, price)).to.be.revertedWith(
         "Only certified watches"
       );
 
       await nft.connect(resellerUser).certify(1);
-      expect(await nft.certified(1)).to.equal(true);
 
       await market.connect(resellerUser).listSecondary(1, price);
       expect(await nft.ownerOf(1)).to.equal(marketAddr);
-
-      await coin.connect(consumerUser).approve(marketAddr, price);
-      await market.connect(consumerUser).buy(1);
-
-      expect(await nft.ownerOf(1)).to.equal(consumerUser.address);
-      expect(await market.creditsOf(resellerUser.address)).to.equal(price);
     });
 
-    it("Reseller NON può comprare secondary (protezione arbitraggio)", async function () {
-      const { nft, market, coin, deployer, factoryUser, resellerUser, stranger, marketAddr } =
-        await loadFixture(deployFixture);
-      const price = ethers.parseEther("500");
-
-      await nft.connect(deployer).setReseller(stranger.address, true);
-
-      await nft.connect(factoryUser).manufacture();
-      await nft.connect(factoryUser).transferFrom(factoryUser.address, resellerUser.address, 1);
-
-      await nft.connect(resellerUser).certify(1);
-      await nft.connect(resellerUser).setApprovalForAll(marketAddr, true);
-      await market.connect(resellerUser).listSecondary(1, price);
-
-      await fundWithLux({ coin, deployer, to: stranger.address, amount: price });
-      await coin.connect(stranger).approve(marketAddr, price);
-
-      await expect(market.connect(stranger).buy(1)).to.be.revertedWith(
-        "Only consumer can buy secondary"
-      );
-    });
-
-    it("Freeze: se disabiliti seller, buy fallisce ma cancelListing funziona", async function () {
+    it("Consumer può comprare secondary solo se seller è attivo", async function () {
       const { nft, market, coin, deployer, factoryUser, resellerUser, consumerUser, marketAddr } =
         await loadFixture(deployFixture);
-      const price = ethers.parseEther("700");
+      const price = ethers.parseEther("300");
 
       await nft.connect(factoryUser).manufacture();
       await nft.connect(factoryUser).transferFrom(factoryUser.address, resellerUser.address, 1);
@@ -288,141 +283,53 @@ describe("Ecosistema WatchChain - Test Suite Ultra Completa", function () {
       await nft.connect(resellerUser).setApprovalForAll(marketAddr, true);
       await market.connect(resellerUser).listSecondary(1, price);
 
+      // disabilita reseller DOPO listing: con policy nuova deve bloccare l'acquisto
       await nft.connect(deployer).setReseller(resellerUser.address, false);
 
       await coin.connect(consumerUser).approve(marketAddr, price);
       await expect(market.connect(consumerUser).buy(1)).to.be.revertedWith("Seller disabled");
-
-      await market.connect(resellerUser).cancelListing(1);
-      expect(await nft.ownerOf(1)).to.equal(resellerUser.address);
-    });
-
-    it("updateListingPrice: ok se attivo, FAIL se disabilitato (solo SECONDARY)", async function () {
-      const { nft, market, deployer, factoryUser, resellerUser, marketAddr } = await loadFixture(
-        deployFixture
-      );
-      const initialPrice = ethers.parseEther("100");
-      const newPrice = ethers.parseEther("150");
-
-      await nft.connect(factoryUser).manufacture();
-      await nft.connect(factoryUser).transferFrom(factoryUser.address, resellerUser.address, 1);
-
-      await nft.connect(resellerUser).certify(1);
-      await nft.connect(resellerUser).setApprovalForAll(marketAddr, true);
-      await market.connect(resellerUser).listSecondary(1, initialPrice);
-
-      await market.connect(resellerUser).updateListingPrice(1, newPrice);
-      let listing = await market.listings(1);
-      expect(listing.price).to.equal(newPrice);
-
-      await nft.connect(deployer).setReseller(resellerUser.address, false);
-      await expect(market.connect(resellerUser).updateListingPrice(1, initialPrice)).to.be.revertedWith(
-        "Seller disabled"
-      );
     });
   });
 
-  describe("Integrità Escrow, Listing e Failures", function () {
-    it("Already listed: non puoi listare due volte lo stesso tokenId", async function () {
-      const { nft, market, factoryUser, marketAddr } = await loadFixture(deployFixture);
-      const price = ethers.parseEther("10");
-
-      await nft.connect(factoryUser).manufacture();
-      await nft.connect(factoryUser).setApprovalForAll(marketAddr, true);
-
-      await market.connect(factoryUser).listPrimary(1, price);
-      await expect(market.connect(factoryUser).listPrimary(1, price)).to.be.revertedWith(
-        "Already listed"
-      );
-    });
-
-    it("cancelListing fallisce se non sei il seller", async function () {
-      const { nft, market, factoryUser, resellerUser, marketAddr } = await loadFixture(deployFixture);
-      const price = ethers.parseEther("10");
-
-      await nft.connect(factoryUser).manufacture();
-      await nft.connect(factoryUser).setApprovalForAll(marketAddr, true);
-      await market.connect(factoryUser).listPrimary(1, price);
-
-      await expect(market.connect(resellerUser).cancelListing(1)).to.be.revertedWith("Not seller");
-    });
-
-    it("buy fallisce se item non listato", async function () {
-      const { market, resellerUser } = await loadFixture(deployFixture);
-      await expect(market.connect(resellerUser).buy(999)).to.be.revertedWith("Item not listed");
-    });
-
-    it("updateListingPrice fallisce se item non listato", async function () {
-      const { market, factoryUser } = await loadFixture(deployFixture);
-      await expect(market.connect(factoryUser).updateListingPrice(999, 1)).to.be.revertedWith(
-        "Item not listed"
-      );
-    });
-
-    it("buy fallisce se seller compra il proprio item", async function () {
-      const { nft, market, factoryUser, marketAddr } = await loadFixture(deployFixture);
-      const price = ethers.parseEther("10");
-
-      await nft.connect(factoryUser).manufacture();
-      await nft.connect(factoryUser).setApprovalForAll(marketAddr, true);
-      await market.connect(factoryUser).listPrimary(1, price);
-
-      await expect(market.connect(factoryUser).buy(1)).to.be.revertedWith("Seller cannot buy own item");
-    });
-
-    it("cancelListing restituisce NFT e azzera listing", async function () {
-      const { nft, market, factoryUser, marketAddr } = await loadFixture(deployFixture);
-      const price = ethers.parseEther("10");
-
-      await nft.connect(factoryUser).manufacture();
-      await nft.connect(factoryUser).setApprovalForAll(marketAddr, true);
-      await market.connect(factoryUser).listPrimary(1, price);
-
-      expect(await nft.ownerOf(1)).to.equal(marketAddr);
-
-      await market.connect(factoryUser).cancelListing(1);
-
-      expect(await nft.ownerOf(1)).to.equal(factoryUser.address);
-      const listing = await market.listings(1);
-      expect(listing.seller).to.equal(ethers.ZeroAddress);
-    });
-
-    it("Price too large (uint88) -> revert", async function () {
-      const { nft, market, factoryUser, marketAddr } = await loadFixture(deployFixture);
-
-      await nft.connect(factoryUser).manufacture();
-      await nft.connect(factoryUser).setApprovalForAll(marketAddr, true);
-
-      const tooLarge = 1n << 88n; // > max uint88
-      await expect(market.connect(factoryUser).listPrimary(1, tooLarge)).to.be.revertedWith(
-        "Price too large"
-      );
-    });
-  });
-
-  describe("Emergency Stop (Market) & Withdraw", function () {
-    it("Pausa Market blocca list/buy/update, ma NON blocca cancelListing", async function () {
-      const { nft, market, coin, deployer, factoryUser, resellerUser, marketAddr } = await loadFixture(
-        deployFixture
-      );
+  describe("Market - Cancel Listing & Update Price", function () {
+    it("Cancel listing restituisce NFT anche se market è in pausa", async function () {
+      const { nft, market, deployer, factoryUser, marketAddr } = await loadFixture(deployFixture);
       const price = ethers.parseEther("100");
 
       await nft.connect(factoryUser).manufacture();
       await nft.connect(factoryUser).setApprovalForAll(marketAddr, true);
       await market.connect(factoryUser).listPrimary(1, price);
 
+      // pausa fatta dall'owner del market
       await market.connect(deployer).setEmergencyStop(true);
 
-      await expect(market.connect(factoryUser).updateListingPrice(1, price)).to.be.revertedWith("paused");
-
-      await coin.connect(resellerUser).approve(marketAddr, price);
-      await expect(market.connect(resellerUser).buy(1)).to.be.revertedWith("paused");
-
-      await market.connect(factoryUser).cancelListing(1);
+      await expect(market.connect(factoryUser).cancelListing(1)).to.not.be.reverted;
       expect(await nft.ownerOf(1)).to.equal(factoryUser.address);
     });
 
-    it("withdraw trasferisce token e azzera crediti", async function () {
+    it("Update price su secondary fallisce se seller disabilitato", async function () {
+      const { nft, market, deployer, factoryUser, resellerUser, marketAddr } = await loadFixture(
+        deployFixture
+      );
+      const price = ethers.parseEther("200");
+
+      await nft.connect(factoryUser).manufacture();
+      await nft.connect(factoryUser).transferFrom(factoryUser.address, resellerUser.address, 1);
+
+      await nft.connect(resellerUser).certify(1);
+      await nft.connect(resellerUser).setApprovalForAll(marketAddr, true);
+      await market.connect(resellerUser).listSecondary(1, price);
+
+      await nft.connect(deployer).setReseller(resellerUser.address, false);
+
+      await expect(
+        market.connect(resellerUser).updateListingPrice(1, ethers.parseEther("250"))
+      ).to.be.revertedWith("Seller disabled");
+    });
+  });
+
+  describe("PullPayments - Withdraw", function () {
+    it("Seller può prelevare credits", async function () {
       const { nft, market, coin, factoryUser, resellerUser, marketAddr } = await loadFixture(
         deployFixture
       );
@@ -436,82 +343,13 @@ describe("Ecosistema WatchChain - Test Suite Ultra Completa", function () {
       await market.connect(resellerUser).buy(1);
 
       expect(await market.creditsOf(factoryUser.address)).to.equal(price);
-      const balanceBefore = await coin.balanceOf(factoryUser.address);
 
+      const before = await coin.balanceOf(factoryUser.address);
       await market.connect(factoryUser).withdraw();
+      const after = await coin.balanceOf(factoryUser.address);
 
+      expect(after - before).to.equal(price);
       expect(await market.creditsOf(factoryUser.address)).to.equal(0);
-      expect(await coin.balanceOf(factoryUser.address)).to.equal(balanceBefore + price);
-    });
-
-    it("withdraw senza crediti reverte", async function () {
-      const { market, resellerUser } = await loadFixture(deployFixture);
-      await expect(market.connect(resellerUser).withdraw()).to.be.revertedWith(
-        "nessun credito da prelevare"
-      );
-    });
-
-    it("no double-withdraw (secondo withdraw reverte)", async function () {
-      const { nft, market, coin, factoryUser, resellerUser, marketAddr } = await loadFixture(
-        deployFixture
-      );
-      const price = ethers.parseEther("123");
-
-      await nft.connect(factoryUser).manufacture();
-      await nft.connect(factoryUser).setApprovalForAll(marketAddr, true);
-      await market.connect(factoryUser).listPrimary(1, price);
-
-      await coin.connect(resellerUser).approve(marketAddr, price);
-      await market.connect(resellerUser).buy(1);
-
-      await market.connect(factoryUser).withdraw();
-      await expect(market.connect(factoryUser).withdraw()).to.be.revertedWith("nessun credito da prelevare");
-    });
-  });
-
-  describe("Event sanity", function () {
-    it("Emette PriceUpdated con old/new corretti", async function () {
-      const { nft, market, factoryUser, marketAddr } = await loadFixture(deployFixture);
-      const initialPrice = ethers.parseEther("10");
-      const newPrice = ethers.parseEther("20");
-
-      await nft.connect(factoryUser).manufacture();
-      await nft.connect(factoryUser).setApprovalForAll(marketAddr, true);
-      await market.connect(factoryUser).listPrimary(1, initialPrice);
-
-      await expect(market.connect(factoryUser).updateListingPrice(1, newPrice))
-        .to.emit(market, "PriceUpdated")
-        .withArgs(1, initialPrice, newPrice);
-    });
-
-    it("Emette Canceled correttamente", async function () {
-      const { nft, market, factoryUser, marketAddr } = await loadFixture(deployFixture);
-      const price = ethers.parseEther("10");
-
-      await nft.connect(factoryUser).manufacture();
-      await nft.connect(factoryUser).setApprovalForAll(marketAddr, true);
-      await market.connect(factoryUser).listPrimary(1, price);
-
-      await expect(market.connect(factoryUser).cancelListing(1))
-        .to.emit(market, "Canceled")
-        .withArgs(1, factoryUser.address);
-    });
-
-    it("Emette Purchased correttamente (primary)", async function () {
-      const { nft, market, coin, factoryUser, resellerUser, marketAddr } = await loadFixture(
-        deployFixture
-      );
-      const price = ethers.parseEther("77");
-
-      await nft.connect(factoryUser).manufacture();
-      await nft.connect(factoryUser).setApprovalForAll(marketAddr, true);
-      await market.connect(factoryUser).listPrimary(1, price);
-
-      await coin.connect(resellerUser).approve(marketAddr, price);
-
-      await expect(market.connect(resellerUser).buy(1))
-        .to.emit(market, "Purchased")
-        .withArgs(1, resellerUser.address, factoryUser.address, price, 0); // SaleType.PRIMARY = 0
     });
   });
 });

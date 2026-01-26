@@ -16,6 +16,13 @@ const safeBigInt = (val) => {
 export function WalletProvider({ children }) {
   const [address, setAddress] = useState(null);
   const [role, setRole] = useState(null);
+
+  // Nuovi flag coerenti coi contratti:
+  // - isReseller = ruolo permanente (mapping reseller)
+  // - isActiveReseller = abilitazione (mapping activeReseller)
+  const [isReseller, setIsReseller] = useState(false);
+  const [isActiveReseller, setIsActiveReseller] = useState(false);
+
   const [balance, setBalance] = useState("0");
   const [pendingBalance, setPendingBalance] = useState("0");
   const [inventory, setInventory] = useState([]);
@@ -29,6 +36,8 @@ export function WalletProvider({ children }) {
     if (!storedAddress || storedAddress === "undefined" || !storedRole) {
       setAddress(null);
       setRole(null);
+      setIsReseller(false);
+      setIsActiveReseller(false);
       setBalance("0");
       setPendingBalance("0");
       setInventory([]);
@@ -42,6 +51,7 @@ export function WalletProvider({ children }) {
     const roleUrl = FF_BASE[storedRole] || FF_BASE.consumer;
 
     try {
+      // 1) Dati economici (dal nodo del ruolo)
       const [balRes, credRes] = await Promise.allSettled([
         FF.luxuryCoin.query.balanceOf(roleUrl, { account: storedAddress }),
         FF.watchMarket.query.creditsOf(roleUrl, { payee: storedAddress }),
@@ -60,10 +70,45 @@ export function WalletProvider({ children }) {
         setPendingBalance("0");
       }
 
+      // 2) Flags on-chain (sempre lettura da producer)
+      // serve per distinguere "reseller permanente" vs "activeReseller"
+      const readNode = FF_BASE.producer;
+
+      const [factoryRes, resellerRes, activeResellerRes] = await Promise.allSettled([
+        FF.watchNft.query.factory(readNode),
+        FF.watchNft.query.reseller(readNode, { "": storedAddress }),
+        FF.watchNft.query.activeReseller(readNode, { "": storedAddress }),
+      ]);
+
+      const factoryAddr =
+        factoryRes.status === "fulfilled"
+          ? String(factoryRes.value.output || factoryRes.value || "").toLowerCase()
+          : "";
+
+      const myAddr = String(storedAddress).toLowerCase();
+      const amIProducer = !!factoryAddr && myAddr === factoryAddr;
+
+      const permReseller =
+        resellerRes.status === "fulfilled"
+          ? resellerRes.value.output === true || String(resellerRes.value.output) === "true"
+          : false;
+
+      const activeReseller =
+        activeResellerRes.status === "fulfilled"
+          ? activeResellerRes.value.output === true || String(activeResellerRes.value.output) === "true"
+          : false;
+
+      // Producer non è reseller
+      setIsReseller(!amIProducer && permReseller);
+      setIsActiveReseller(!amIProducer && activeReseller);
+
       // WalletContext non deve più calcolare inventory (lo fa MePage)
       setInventory([]);
     } catch (error) {
       console.error("Critical Wallet Sync Error:", error);
+      // fallback sicuro
+      setIsReseller(false);
+      setIsActiveReseller(false);
     } finally {
       setLoading(false);
     }
@@ -111,6 +156,8 @@ export function WalletProvider({ children }) {
           logout();
           setAddress(null);
           setRole(null);
+          setIsReseller(false);
+          setIsActiveReseller(false);
 
           if (window.location.pathname !== "/login") {
             window.location.href = "/login";
@@ -148,6 +195,8 @@ export function WalletProvider({ children }) {
       value={{
         address,
         role,
+        isReseller,
+        isActiveReseller,
         balance,
         pendingBalance,
         inventory,

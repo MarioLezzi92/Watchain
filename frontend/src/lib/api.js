@@ -1,4 +1,4 @@
-import { getToken, clearSession } from "./auth.js";
+import { clearSession } from "./auth.js";
 import {
   FF_BASE,
   FF_APIS,
@@ -13,7 +13,7 @@ import {
 
 export { FF_BASE, FF_APIS, ffInvoke, ffQuery, ffListenerGet };
 
-const BACKEND_BASE = "http://127.0.0.1:3001";
+const BACKEND_BASE = "http://localhost:3001";
 const _cache = {};
 
 // --- HELPER RETE ---
@@ -21,21 +21,62 @@ async function parseJsonSafely(res) {
   return res.json().catch(() => ({}));
 }
 
-async function request(method, path, body) {
-  const token = getToken();
+function getCookie(name) {
+  const m = document.cookie.match(new RegExp("(^| )" + name + "=([^;]+)"));
+  return m ? decodeURIComponent(m[2]) : null;
+}
+
+let refreshInFlight = null;
+
+async function doRefreshOnce() {
+  if (!refreshInFlight) {
+    refreshInFlight = fetch(`${BACKEND_BASE}/auth/refresh`, {
+      method: "POST",
+      credentials: "include",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        // CSRF obbligatorio per refresh
+        ...(getCookie("csrf_token") ? { "X-CSRF-Token": getCookie("csrf_token") } : {}),
+      },
+      body: "{}",
+    })
+      .then(async (r) => {
+        if (!r.ok) throw new Error(`refresh ${r.status}`);
+        return r.json().catch(() => ({}));
+      })
+      .finally(() => {
+        refreshInFlight = null;
+      });
+  }
+  return refreshInFlight;
+}
+
+async function request(method, path, body, _retry = false) {
+  const csrf = getCookie("csrf_token");
 
   const res = await fetch(`${BACKEND_BASE}${path}`, {
     method,
+    credentials: "include",
     headers: {
       Accept: "application/json",
       "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(method !== "GET" && csrf ? { "X-CSRF-Token": csrf } : {}),
     },
     ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
   });
 
-  // FIX: 401 => logout client-side + stop
   if (res.status === 401) {
+    if (!_retry && path !== "/auth/refresh") {
+      try {
+        await doRefreshOnce();                 // una sola refresh per tutti
+        return request(method, path, body, true); // ritenta
+      } catch {
+        clearSession();
+        throw new Error("Unauthorized");
+      }
+    }
+
     clearSession();
     throw new Error("Unauthorized");
   }
@@ -44,6 +85,8 @@ async function request(method, path, body) {
   if (!res.ok) throw new Error(data?.error || data?.message || `HTTP ${res.status}`);
   return data;
 }
+
+
 
 export function apiGet(path) {
   return request("GET", path);
@@ -62,8 +105,9 @@ export function apiDelete(path) {
 export const AuthAPI = {
   nonce: (address) => apiGet(`/auth/nonce?address=${encodeURIComponent(address)}`),
   login: (address, signature) => apiPost("/auth/login", { address, signature }),
+  me: () => apiGet("/auth/me"),
   logout: () => apiPost("/auth/logout", {}),
-  me: () => apiGet("/auth/me"), // <-- aggiunto
+  refresh: () => apiPost("/auth/refresh", {}), 
 };
 
 // --- PROXY GENERATOR ---
@@ -155,37 +199,4 @@ export const FF = {
   watchMarket: createProxyApi(FF_APIS.watchMarket),
   watchNft: createProxyApi(FF_APIS.watchNft),
   luxuryCoin: createProxyApi(FF_APIS.luxuryCoin),
-
-  // --- MARKET OPERATIONS (Gestione Approvazione Automatica) ---
-  marketOps: {
-    ensureApprovalAndList: async (roleUrl, userAddress, tokenId, priceLuxWei, isSecondary) => {
-      // 1. Trova l'indirizzo del Market
-      const marketAddr = await FF.directory.resolveApi(FF_APIS.watchMarket);
-      if (!marketAddr) throw new Error("Impossibile trovare l'indirizzo del contratto WatchMarket");
-
-      // 2. Controlla se il Market è approvato per questo utente
-      // isApprovedForAll(owner, operator)
-      const isApproved = await FF.watchNft.query.isApprovedForAll(roleUrl, {
-        owner: userAddress,
-        operator: marketAddr,
-      });
-
-      // 3. Se non approvato, esegui approve (setApprovalForAll)
-      if (!isApproved?.output) {
-        console.log(`Market ${marketAddr} non approvato. Richiesta approvazione...`);
-        await FF.watchNft.invoke.setApprovalForAll(roleUrl, {
-          operator: marketAddr,
-          approved: true,
-        });
-        console.log("Approvazione confermata.");
-      }
-
-      // 4. Esegui il listing (Primary o Secondary)
-      const method = isSecondary ? "listSecondary" : "listPrimary";
-      return await FF.watchMarket.invoke[method](roleUrl, {
-        tokenId: tokenId,
-        price: priceLuxWei,
-      });
-    },
-  },
 };

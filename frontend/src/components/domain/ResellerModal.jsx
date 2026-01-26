@@ -49,7 +49,7 @@ export default function ResellerModal({ isOpen, onClose }) {
   const checkContractStatus = async (addr) => {
     try {
       const roleUrl = FF_BASE.producer;
-      const res = await FF.watchNft.query.reseller(roleUrl, { "": addr });  
+      const res = await FF.watchNft.query.activeReseller(roleUrl, { "": addr });  
       const isAuth = (res.output === true || String(res.output) === "true");
       setCurrentStatus(isAuth);
     } catch (e) {

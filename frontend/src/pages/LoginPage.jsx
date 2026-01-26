@@ -1,15 +1,14 @@
 import React, { useState } from "react";
-import { useNavigate } from "react-router-dom"; 
-import { AuthAPI, FF, FF_BASE } from "../lib/api"; // Importiamo FF e FF_BASE
-import { saveSession } from "../lib/auth"; 
-import { useWallet } from "../context/WalletContext"; 
-import { useSystem } from "../context/SystemContext"; 
+import { useNavigate } from "react-router-dom";
+import { AuthAPI, FF, FF_BASE } from "../lib/api";
+import { saveSession } from "../lib/auth";
+import { useWallet } from "../context/WalletContext";
+import { useSystem } from "../context/SystemContext";
 
 export default function Login() {
   const navigate = useNavigate();
   const { refreshWallet } = useWallet();
-  const { forceRefresh } = useSystem(); 
-
+  const { forceRefresh } = useSystem();
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
 
@@ -21,68 +20,69 @@ export default function Login() {
 
       // 1. Richiediamo l'account ATTIVO su MetaMask
       const accounts = await window.ethereum.request({ method: "eth_requestAccounts" });
-      
+
       if (!accounts || accounts.length === 0) {
         throw new Error("Nessun account selezionato.");
       }
 
-      const address = accounts[0]; 
+      const address = accounts[0];
 
       // 2. Otteniamo il Nonce dal Backend
-      const resNonce = await AuthAPI.nonce(address); 
-      const nonce = resNonce?.nonce; 
-      const message = resNonce?.message;  
+      const resNonce = await AuthAPI.nonce(address);
+      const nonce = resNonce?.nonce;
+      const message = resNonce?.message;
 
       if (!nonce) throw new Error("Errore: Nonce non ricevuto.");
-      
+
       // 3. Firma con MetaMask
       const signature = await window.ethereum.request({
         method: "personal_sign",
         params: [message, address],
       });
 
-      // 4. Login Backend (Riceviamo solo il Token, NIENTE ruolo)
+      // 4. Login Backend
       const resLogin = await AuthAPI.login(address, signature);
-      const { token } = resLogin;
-
-      if (!token) throw new Error("Login fallito: Token non ricevuto.");
+      if (!resLogin?.success) throw new Error("Login fallito.");
 
       // --- 5. LOGICA DECENTRALIZZATA: Chiediamo il ruolo alla Blockchain ---
       // Usiamo il nodo Producer come fonte pubblica di lettura
-      const readNode = FF_BASE.producer; 
-      
-      // Eseguiamo due query in parallelo per velocità:
-      const [factoryRes, resellerRes, knownRes] = await Promise.all([
+      const readNode = FF_BASE.producer;
+
+      const [factoryRes, resellerPermRes, activeResellerRes] = await Promise.all([
         FF.watchNft.query.factory(readNode),
+        // reseller(address) = ruolo permanente
         FF.watchNft.query.reseller(readNode, { "": address }),
-        FF.watchNft.query.knownReseller(readNode, { "": address }) 
+        // activeReseller(address) = abilitazione operativa
+        FF.watchNft.query.activeReseller(readNode, { "": address }),
       ]);
-      
+
       const factoryAddr = String(factoryRes.output || "").toLowerCase();
-      const isActiveReseller = (resellerRes.output === true || String(resellerRes.output) === "true");
-      const isBusiness = isActiveReseller || (knownRes.output === true || String(knownRes.output) === "true");     
-      
       const myAddr = String(address).toLowerCase();
 
-      let blockchainRole = "consumer"; // Ruolo di default
+      const isResellerPermanent =
+        resellerPermRes.output === true || String(resellerPermRes.output) === "true";
 
+      const isActiveReseller =
+        activeResellerRes.output === true || String(activeResellerRes.output) === "true";
+
+      let blockchainRole = "consumer";
       if (myAddr === factoryAddr) {
         blockchainRole = "producer";
-      } else if (isBusiness) {
+      } else if (isResellerPermanent) {
         blockchainRole = "reseller";
       }
 
-      console.log(`Ruolo assegnato: ${blockchainRole} (Active: ${isActiveReseller})`);
+      console.log(
+        `Ruolo assegnato: ${blockchainRole} (ResellerPerm: ${isResellerPermanent}, Active: ${isActiveReseller})`
+      );
 
       // 6. Salvataggio Sessione con il ruolo reale
-      saveSession(token, address, blockchainRole);
+      saveSession(address, blockchainRole);
 
       // 7. Aggiornamento UI e redirect
-      await refreshWallet(); 
-      forceRefresh(); 
-      
-      navigate("/market"); 
-
+      await refreshWallet();
+      forceRefresh();
+      navigate("/market");
     } catch (e) {
       console.error("Login Error:", e);
       if (e.code === 4001) {
@@ -100,12 +100,22 @@ export default function Login() {
       <div className="w-full max-w-lg bg-[#4A0404] text-[#f2e9d0] rounded-3xl shadow-2xl overflow-hidden relative border border-[#5e0a0a]">
         <div className="h-2 w-full bg-[#D4AF37]"></div>
         <div className="p-10 md:p-14 text-center">
-          
           <div className="mx-auto h-16 w-16 bg-[#D4AF37] rounded-full flex items-center justify-center mb-6 shadow-lg text-[#4A0404]">
-             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-8 h-8">
-               <path strokeLinecap="round" strokeLinejoin="round" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-               <path strokeLinecap="round" strokeLinejoin="round" d="M15.91 11.672a.375.375 0 010 .656l-5.603 3.113a.375.375 0 01-.557-.328V8.887c0-.286.307-.466.557-.327l5.603 3.112z" />
-             </svg>
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              fill="none"
+              viewBox="0 0 24 24"
+              strokeWidth={1.5}
+              stroke="currentColor"
+              className="w-8 h-8"
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M15.91 11.672a.375.375 0 010 .656l-5.603 3.113a.375.375 0 01-.557-.328V8.887c0-.286.307-.466.557-.327l5.603 3.112z"
+              />
+            </svg>
           </div>
 
           <h1 className="text-5xl font-serif font-bold tracking-tight mb-2 text-white">Watchain</h1>
@@ -116,8 +126,8 @@ export default function Login() {
           <div className="w-12 h-px bg-[#D4AF37]/40 mx-auto mb-8"></div>
 
           <p className="text-[#f2e9d0]/80 mb-8 font-light leading-relaxed">
-            Connect your wallet to access the exclusive marketplace. 
-            <br className="hidden sm:block"/>
+            Connect your wallet to access the exclusive marketplace.
+            <br className="hidden sm:block" />
             Identity verification is handled automatically via JWT.
           </p>
 
@@ -137,7 +147,14 @@ export default function Login() {
             ) : (
               <>
                 <span>Connect MetaMask</span>
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5">
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  strokeWidth={2}
+                  stroke="currentColor"
+                  className="w-5 h-5"
+                >
                   <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3" />
                 </svg>
               </>
@@ -145,7 +162,7 @@ export default function Login() {
           </button>
 
           <div className="mt-8 text-[10px] text-[#f2e9d0]/30 font-mono">
-            Secure connection required. Please ensure MetaMask is unlocked. 
+            Secure connection required. Please ensure MetaMask is unlocked.
           </div>
         </div>
       </div>

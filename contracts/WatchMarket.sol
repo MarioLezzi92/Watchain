@@ -62,7 +62,7 @@ contract WatchMarket is Ownable, ReentrancyGuard, EmergencyStop, PullPayments, E
 
     function _isConsumer(address who) internal view returns (bool) {
         if (who == watch.factory()) return false;
-        if (watch.knownReseller(who)) return false; // ex/attuale reseller => non consumer
+        if (watch.reseller(who)) return false; // reseller (ruolo permanente) => non consumer
         return true;
     }
 
@@ -100,7 +100,7 @@ contract WatchMarket is Ownable, ReentrancyGuard, EmergencyStop, PullPayments, E
         require(listings[tokenId].seller == address(0), "Already listed");
 
         require(watch.ownerOf(tokenId) == msg.sender, "Not owner");
-        require(watch.reseller(msg.sender), "Only Active Reseller can list");
+        require(watch.activeReseller(msg.sender), "Only Active Reseller can list");
         require(watch.certified(tokenId), "Only certified watches");
 
         _requireMarketApproved(msg.sender, tokenId);
@@ -135,7 +135,7 @@ contract WatchMarket is Ownable, ReentrancyGuard, EmergencyStop, PullPayments, E
 
         // Freeze: se è SECONDARY e il reseller è disabilitato, non può modificare prezzo
         if (l.saleType == SaleType.SECONDARY) {
-            require(watch.reseller(msg.sender), "Seller disabled");
+            require(watch.activeReseller(msg.sender), "Seller disabled");
         }
 
         uint256 old = uint256(l.price);
@@ -153,10 +153,11 @@ contract WatchMarket is Ownable, ReentrancyGuard, EmergencyStop, PullPayments, E
         require(watch.ownerOf(tokenId) == address(this), "Not in escrow");
 
         if (l.saleType == SaleType.PRIMARY) {
-            require(watch.knownReseller(msg.sender), "Only resellers can buy primary");
+            require(watch.activeReseller(msg.sender), "Only active resellers can buy primary");
             require(l.seller == watch.factory(), "Primary seller must be producer");
         } else {
-            require(watch.reseller(l.seller), "Seller disabled");
+            // seller deve essere attivo anche al momento dell'acquisto (policy: disabilitato = non opera)
+            require(watch.activeReseller(l.seller), "Seller disabled");
             require(watch.certified(tokenId), "Watch not certified");
             require(_isConsumer(msg.sender), "Only consumer can buy secondary");
         }

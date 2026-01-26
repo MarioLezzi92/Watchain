@@ -1,23 +1,27 @@
-// jwt.js
 import jwt from "jsonwebtoken";
 import { env } from "../../env.js";
 
-const ISSUER = env.JWT_ISSUER || "watchain-backend";
-const AUDIENCE = env.JWT_AUDIENCE || "watchain-frontend";
+const ACCESS_TTL = env.ACCESS_TTL || "15m";
+const REFRESH_TTL = env.REFRESH_TTL || "14d";
 
-export function signJwt(payload) {
-  return jwt.sign(payload, env.JWT_SECRET, {
+export function signAccessJwt(address) {
+  return jwt.sign({ sub: address }, env.JWT_SECRET, {
     algorithm: "HS256",
-    expiresIn: env.JWT_TTL,
-    issuer: ISSUER,
-    audience: AUDIENCE,
+    expiresIn: ACCESS_TTL,
   });
 }
 
-export function verifyJwt(token) {
-  return jwt.verify(token, env.JWT_SECRET, {
-    algorithms: ["HS256"],
-    issuer: ISSUER,
-    audience: AUDIENCE,
+export function signRefreshJwt(address, jti) {
+  return jwt.sign({ sub: address, jti }, env.JWT_SECRET, {
+    algorithm: "HS256",
+    expiresIn: REFRESH_TTL,
   });
+}
+
+export function verifyAccessJwt(token) {
+  return jwt.verify(token, env.JWT_SECRET, { algorithms: ["HS256"] });
+}
+
+export function verifyRefreshJwt(token) {
+  return jwt.verify(token, env.JWT_SECRET, { algorithms: ["HS256"] });
 }
