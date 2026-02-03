@@ -9,7 +9,6 @@ import { ArrowPathIcon, ExclamationCircleIcon } from "@heroicons/react/24/outlin
 import { useSystem } from "../context/SystemContext";
 import { useWallet } from "../context/WalletContext";
 import { parseLux, formatError, formatLux } from "../lib/formatters"; 
-
 import { FF, FF_BASE } from "../lib/api";
 
 const getRoleBaseUrl = (role) => {
@@ -18,35 +17,33 @@ const getRoleBaseUrl = (role) => {
   return FF_BASE.consumer;
 };
 
-// Helper per BigInt
 const safeBigInt = (val) => { 
-  try { 
-    return val != null ? BigInt(val) : 0n; 
-  } catch { 
-    return 0n; 
-  } 
+  try { return val != null ? BigInt(val) : 0n; } catch { return 0n; } 
 };
 
 const ZERO_ADDR = "0x0000000000000000000000000000000000000000";
 
 export default function MarketPage() {
-  
   const { address, role, refreshWallet } = useWallet();
   const [viewMode, setViewMode] = useState('PRIMARY'); 
   const [balanceLux, setBalanceLux] = useState("-");
   const [listings, setListings] = useState([]);
   const [selected, setSelected] = useState(null);
+  
+  // Stati UI (Loading, Busy, Modali)
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(false);
-  
   const [confirmModal, setConfirmModal] = useState({ isOpen: false, title: "", message: "", onConfirm: null });
   const [successModal, setSuccessModal] = useState({ isOpen: false, message: "" });
   const [errorModal, setErrorModal] = useState({ isOpen: false, message: "" });
 
   const { refreshTrigger } = useSystem();
 
-
-
+  /**
+   * RICOSTRUZIONE STATO MERCATO (Event Sourcing Pattern)
+   * Invece di interrogare singolarmente ogni token (lento), scarichiamo il log degli eventi
+   * e ricostruiamo localmente quali orologi sono attualmente "listed".
+   */
   const refreshListings = useCallback(async (silent = true) => {
     if (!silent) setLoading(true);
 
@@ -55,42 +52,28 @@ export default function MarketPage() {
         setListings([]);
         return;
       }
-
       const roleUrl = getRoleBaseUrl(role);
 
-      // 1) Recupero Eventi
-      const evRaw = await FF.subscriptions.eventsByName(
-        FF_BASE.producer,
-        "watchain_webhook",
-        { limit: 500 }
-      );
-
-      let events = Array.isArray(evRaw)
-        ? evRaw
-        : (evRaw.items || evRaw.results || []);
-
+      // 1. Fetch Eventi (Blockchain Log)
+      const evRaw = await FF.subscriptions.eventsByName(FF_BASE.producer, "watchain_webhook", { limit: 500 });
+      let events = Array.isArray(evRaw) ? evRaw : (evRaw.items || evRaw.results || []);
+      
+      // Elaboriamo dal più recente al più vecchio
       events = events.reverse(); 
 
-      const getEventName = (e) =>
-        String(e?.blockchainEvent?.name || e?.name || e?.event?.name || "").toLowerCase();
-
-      const getOut = (e) =>
-        e?.blockchainEvent?.output || e?.data?.output || e?.output || null;
-
+      // Helpers per parsing sicuro
+      const getEventName = (e) => String(e?.blockchainEvent?.name || "").toLowerCase();
+      const getOut = (e) => e?.blockchainEvent?.output || {};
       const getTokenId = (e) => {
         const out = getOut(e);
-        if (out?.tokenId != null) return String(out.tokenId);
-        if (out?.["0"] != null) return String(out["0"]);
-        return null;
+        return out?.tokenId != null ? String(out.tokenId) : null;
       };
-
       const getSaleType = (e) => {
         const out = getOut(e);
-        if (out?.saleType != null) return Number(String(out.saleType)); 
-        if (out?.["3"] != null) return Number(String(out["3"]));
-        return null;
+        return out?.saleType != null ? Number(String(out.saleType)) : null;
       };
 
+      // 2. Replay degli eventi per determinare lo stato attuale
       const active = new Map();
 
       for (const e of events) {
@@ -99,19 +82,24 @@ export default function MarketPage() {
         if (!tokenId) continue;
 
         if (name === "listed") {
+          // Se listato, lo aggiungiamo alla mappa con il suo tipo (Primario/Secondario)
           active.set(tokenId, getSaleType(e));
         } else if (name === "canceled" || name === "purchased") {
+          // Se venduto o cancellato, lo rimuoviamo
           active.delete(tokenId);
         }
       }
       
+      // 3. Filtro per Mercato Primario (0) o Secondario (1)
       const targetType = viewMode === 'PRIMARY' ? 0 : 1;
       const tokenIds = Array.from(active.entries())
         .filter(([_, st]) => st === targetType) 
         .map(([tokenId]) => tokenId);
 
+      // 4. Data Enrichment (Batch Request)
+      // Recuperiamo dettagli (prezzo, venditore, certificazione) solo per i token attivi
       const results = [];
-      const CHUNK = 30;
+      const CHUNK = 30; // Batching per non sovraccaricare il nodo
 
       for (let i = 0; i < tokenIds.length; i += CHUNK) {
         const slice = tokenIds.slice(i, i + CHUNK);
@@ -125,13 +113,11 @@ export default function MarketPage() {
             const listing = listingRes.output || listingRes;
             const isCertified = certRes.output === true || String(certRes.output) === "true";
 
-            if (!listing?.seller) return null;
-            const seller = String(listing.seller).toLowerCase();
-            if (seller === ZERO_ADDR) return null;
+            if (!listing?.seller || String(listing.seller).toLowerCase() === ZERO_ADDR) return null;
 
             return {
               tokenId: String(tokenId),
-              seller,
+              seller: String(listing.seller).toLowerCase(),
               price: listing.price,
               priceLux: formatLux(listing.price),
               saleType: active.get(String(tokenId)) ?? null,
@@ -142,9 +128,10 @@ export default function MarketPage() {
         for (const x of batch) if (x) results.push(x);
       }
 
+      // Ordinamento per ID
       results.sort((a, b) => Number(a.tokenId) - Number(b.tokenId));
-
       setListings(results);
+
     } catch (e) {
       console.error("refreshListings error:", e);
       setListings([]);
@@ -153,17 +140,19 @@ export default function MarketPage() {
     }
   }, [role, viewMode]);
 
+  // Recupero Saldo LUX
   const refreshBalance = useCallback(async () => {
-      if (!address || !role) return;
-      try {
-        const roleUrl = getRoleBaseUrl(role);
-        const res = await FF.luxuryCoin.query.balanceOf(roleUrl, { account: address });      
-        setBalanceLux(formatLux(res?.output || "0"));
-      } catch (error) {
-        console.error("ERROR BALANCE: ", error);
-      }
-    }, [address, role]);
+    if (!address || !role) return;
+    try {
+      const roleUrl = getRoleBaseUrl(role);
+      const res = await FF.luxuryCoin.query.balanceOf(roleUrl, { account: address });      
+      setBalanceLux(formatLux(res?.output || "0"));
+    } catch (error) {
+      console.error("ERROR BALANCE: ", error);
+    }
+  }, [address, role]);
 
+  // Effetti collaterali per cambio stato
   useEffect(() => {
     if (role === 'consumer') setViewMode('SECONDARY');
     else setViewMode('PRIMARY');
@@ -172,9 +161,9 @@ export default function MarketPage() {
   useEffect(() => {
     refreshBalance();
     refreshListings(true); 
-  }, [viewMode, address, role, refreshListings]);
+  }, [viewMode, address, role, refreshListings, refreshBalance]);
 
-
+  // Aggiornamento Real-Time (Socket.io Trigger)
   useEffect(() => {
     if (refreshTrigger > 0) {
       refreshListings(true);
@@ -182,6 +171,8 @@ export default function MarketPage() {
     }
   }, [refreshTrigger, refreshListings, refreshBalance]);
 
+
+  // --- AZIONI UTENTE ---
 
   const handleCancelClick = (item) => {
     setConfirmModal({
@@ -192,15 +183,15 @@ export default function MarketPage() {
         setBusy(true);
         try {
           const roleBaseUrl = getRoleBaseUrl(role);
+          // Invio transazione sicura tramite Backend Proxy
           await FF.watchMarket.invoke.cancelListing(roleBaseUrl, { tokenId: item.tokenId }, { key: address });
-          setListings(current => current.filter(x => x.tokenId !== item.tokenId));
           
+          // UI Update Ottimistico
+          setListings(current => current.filter(x => x.tokenId !== item.tokenId));
           setSelected(null);
           setSuccessModal({ isOpen: true, message: "Listing rimosso." });
-          
           refreshBalance();
           refreshWallet();
-          
         } catch (e) {
           setErrorModal({ isOpen: true, message: formatError(e, "MARKET") });
         } finally {
@@ -211,102 +202,97 @@ export default function MarketPage() {
     });
   };
 
-  const performBuy = async (item) => {
-    setBusy(true);
+  /**
+   * LOGICA DI ACQUISTO (ERC-20 Approval Pattern)
+   * 1. Check Allowance: Verifichiamo se il Market è autorizzato a spendere i nostri LUX.
+   * 2. Se NO -> Invoke Approve (Transazione 1) -> Wait -> Invoke Buy (Transazione 2).
+   * 3. Se SI -> Invoke Buy (Transazione unica).
+   */
+  const handleBuyClick = async (item) => {
     try {
-      const roleBaseUrl = getRoleBaseUrl(role); 
-      
-      await FF.watchMarket.invoke.buy(roleBaseUrl, { tokenId: item.tokenId }, { key: address }); 
-      
-      setSuccessModal({ isOpen: true, message: `Acquisto orologio #${item.tokenId} completato!` });
-      
+      const roleUrl = getRoleBaseUrl(role);
+      const marketAddr = await FF.directory.resolveApi(FF.apis.watchMarket);
+      const priceWei = item.price; 
 
-      setListings(current => current.filter(x => x.tokenId !== item.tokenId));
+      // 1. Controllo Allowance
+      const allowanceRes = await FF.luxuryCoin.query.allowance(roleUrl, {
+        owner: address,
+        spender: marketAddr
+      });
+      
+      const currentAllowance = safeBigInt(allowanceRes?.output || "0");
+      const requiredPrice = safeBigInt(priceWei || "0");
 
-      if (balanceLux !== "-" && item.priceLux) {
-          try {
-              // Nota: serve importare parseLux da formatters.js
-              const oldBal = BigInt(parseLux(balanceLux)); 
-              const price = BigInt(item.price); // item.price è in Wei
-              const newBal = oldBal - price;
-              setBalanceLux(formatLux(newBal.toString())); 
-          } catch(e) { /* ignore calc errors */ }
+      const executeBuy = async () => {
+        setBusy(true);
+        try {
+           await FF.watchMarket.invoke.buy(roleUrl, { tokenId: item.tokenId }, { key: address });
+           setSuccessModal({ isOpen: true, message: `Acquisto orologio #${item.tokenId} completato!` });
+           setListings(current => current.filter(x => x.tokenId !== item.tokenId));
+           setSelected(null);
+           refreshListings(true);
+           refreshBalance();
+           refreshWallet();
+        } catch(e) {
+           setErrorModal({ isOpen: true, message: formatError(e, "MARKET") });
+        } finally {
+           setBusy(false);
+           setConfirmModal(p => ({ ...p, isOpen: false }));
+        }
+      };
+
+      // CASO A: Allowance Sufficiente -> Acquisto diretto
+      if (currentAllowance >= requiredPrice) {
+          setConfirmModal({
+            isOpen: true, 
+            title: "Conferma Acquisto",
+            message: `Acquistare orologio #${item.tokenId} per ${item.priceLux} LUX?`,
+            onConfirm: executeBuy 
+          });
+          return;
       }
-      setSelected(null); 
-      setConfirmModal(p => ({ ...p, isOpen: false })); 
-      refreshListings(true); 
-      refreshBalance();       
-      refreshWallet();        
+
+      // CASO B: Allowance Insufficiente -> Approve + Buy
+      setConfirmModal({
+        isOpen: true,
+        title: "Autorizza e Acquista",
+        message: `È necessaria l'approvazione per spendere ${item.priceLux} LUX. Procedere?`,
+        onConfirm: async () => {
+          setBusy(true); 
+          try {
+            // STEP 1: APPROVE
+            await FF.luxuryCoin.invoke.approve(roleUrl, {
+              spender: marketAddr,
+              value: priceWei 
+            }, { key: address }); 
+            
+            // Piccola attesa per propagazione
+            await new Promise(r => setTimeout(r, 1000));
+
+            // STEP 2: BUY
+            await FF.watchMarket.invoke.buy(roleUrl, { tokenId: item.tokenId }, { key: address });
+            
+            setSuccessModal({ isOpen: true, message: `Acquisto orologio #${item.tokenId} completato!` });
+            setListings(current => current.filter(x => x.tokenId !== item.tokenId));
+            setSelected(null);
+            refreshListings(true);
+            refreshBalance();
+            refreshWallet();
+          } catch (e) { 
+            console.error(e);
+            setErrorModal({ isOpen: true, message: formatError(e) }); 
+          } finally {
+            setBusy(false);
+            setConfirmModal(p => ({ ...p, isOpen: false }));
+          }
+        }
+      });
 
     } catch (e) {
-      setErrorModal({ isOpen: true, message: formatError(e, "MARKET") });
-    } finally { 
-      setBusy(false); 
+        console.error(e);
+        setErrorModal({ isOpen: true, message: "Errore durante la preparazione dell'acquisto." });
     }
   };
-
-  const handleBuyClick = async (item) => {
-      try {
-        const roleUrl = getRoleBaseUrl(role);
-        const marketAddr = await FF.directory.resolveApi(FF.apis.watchMarket);
-        const priceWei = item.price; 
-
-
-        // 1. Controllo Silenzioso Allowance
-        const allowanceRes = await FF.luxuryCoin.query.allowance(roleUrl, {
-          owner: address,
-          spender: marketAddr
-        });
-        
-        const currentAllowance = safeBigInt(allowanceRes?.output || "0");
-        const requiredPrice = safeBigInt(priceWei || "0");
-
-        // CASO A: Ha già i permessi -> Compra diretto
-        if (currentAllowance >= requiredPrice) {
-            setConfirmModal({
-              isOpen: true, 
-              title: "Conferma Acquisto",
-              message: `Acquistare orologio #${item.tokenId} per ${item.priceLux} LUX?`,
-              onConfirm: () => performBuy(item) 
-            });
-            return;
-        }
-
-        // CASO B: Serve Approvazione -> Flusso "Chain" (Approve + Buy)
-        setConfirmModal({
-          isOpen: true,
-          title: "Autorizza e Acquista",
-          message: ` Autorizzi l'acquisto dell'orologio #${item.tokenId} per ${item.priceLux} LUX?`,
-          onConfirm: async () => {
-            setBusy(true); 
-            try {
-              // STEP 1: APPROVE
-              // --- MODIFICA QUI SOTTO ---
-              // Aggiunto { key: address } anche qui
-              await FF.luxuryCoin.invoke.approve(roleUrl, {
-                spender: marketAddr,
-                value: priceWei 
-              }, { key: address }); 
-              // --------------------------
-
-              await new Promise(r => setTimeout(r, 500));
-
-              // STEP 2: BUY (Automatico)
-              await performBuy(item); 
-            } catch (e) { 
-              console.error(e);
-              setBusy(false);
-              setConfirmModal(p => ({ ...p, isOpen: false }));
-              setErrorModal({ isOpen: true, message: formatError(e) }); 
-            }
-          }
-        });
-
-      } catch (e) {
-          console.error(e);
-          setErrorModal({ isOpen: true, message: "Errore durante la preparazione dell'acquisto." });
-      }
-    };
 
   return (
     <AppShell title="Watchain" address={address} balanceLux={balanceLux}>
@@ -315,6 +301,7 @@ export default function MarketPage() {
            <div>
              <h1 className="text-[#4A0404] text-4xl font-serif font-bold">Market</h1>
              
+             {/* Filtri Mercato */}
              <div className="flex w-fit gap-2 mt-4 bg-[#4A0404]/5 p-1 rounded-lg">
                 {role !== 'consumer' && (
                   <button onClick={() => setViewMode('PRIMARY')} 

@@ -2,12 +2,16 @@ import React, { useState, useEffect } from "react";
 import { XMarkIcon, CheckBadgeIcon, CurrencyDollarIcon } from "@heroicons/react/24/outline";
 import { useWallet } from "../../context/WalletContext"; 
 
-export default function WatchDetailsModal({ open, onClose, item, role, onList, onCancel, onBuy, onUpdatePrice, onCertify, busy }) {
+export default function WatchDetailsModal({ 
+  open, onClose, item, role, 
+  onList, onCancel, onBuy, onUpdatePrice, onCertify, 
+  busy 
+}) {
   const [inputPrice, setInputPrice] = useState("");
-  const [updatePriceValue, setUpdatePriceValue] = useState(""); // Nuovo stato per l'aggiornamento
-  
+  const [updatePriceValue, setUpdatePriceValue] = useState("");
   const { address } = useWallet(); 
 
+  // Reset input alla apertura
   useEffect(() => {
     if (open) {
         setInputPrice("");
@@ -23,36 +27,41 @@ export default function WatchDetailsModal({ open, onClose, item, role, onList, o
   const itemSeller = (item.seller || "").toLowerCase();
   const itemOwner = (item.owner || "").toLowerCase();
 
-  // Logica Ownership con Escrow:
-  // Se è listato, l'owner on-chain è il Market, ma visivamente è il seller.
+  // --- LOGICA DI OWNERSHIP (ESCROW AWARENESS) ---
+  // Se l'oggetto è listato, tecnicamente l'owner on-chain è il contratto WatchMarket.
+  // Tuttavia, logicamente appartiene ancora al 'seller' che lo ha messo in vendita.
+  // Visualizziamo il seller come proprietario effettivo per chiarezza.
   const effectiveOwner = (isListed && itemSeller && itemSeller !== "0x0000000000000000000000000000000000000000") 
     ? itemSeller 
     : itemOwner;
 
+  // Determina se l'utente corrente ha diritti di gestione
   const isMine = effectiveOwner === myAddress;
   const canManage = isMine; 
   
-  // Logica permessi:
-  // 1. Certificazione: Solo reseller, oggetto mio, non certificato, non in vendita
+  // --- LOGICA PERMESSI RBAC ---
+  // Certificazione: Solo Reseller può certificare, e solo se l'oggetto non è già listato.
   const canCertify = role === 'reseller' && isMine && !item.certified && !isListed;
+
+  // Listing:
+  // 1. Producer: Può listare sempre (Mercato Primario).
+  // 2. Reseller: Può listare SOLO se certificato (Mercato Secondario Certificato).
+  // 3. Consumer: Non può listare (in questa versione).
+  const canList = !isListed && (role === 'producer' || (role === 'reseller' && item.certified));
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div 
-        className="absolute inset-0 bg-black/80 backdrop-blur-sm transition-opacity" 
-        onClick={onClose}
-      />
+      {/* Backdrop */}
+      <div className="absolute inset-0 bg-black/80 backdrop-blur-sm transition-opacity" onClick={onClose} />
 
       <div className="relative w-full max-w-4xl bg-[#4A0404] text-[#FDFBF7] rounded-3xl shadow-2xl overflow-hidden flex flex-col md:flex-row ring-1 ring-white/10 animate-in fade-in zoom-in duration-300">
         
-        <button 
-          onClick={onClose}
-          className="absolute top-4 right-4 z-10 p-2 bg-black/20 hover:bg-black/40 rounded-full text-white/70 hover:text-white transition"
-        >
+        {/* Close Button */}
+        <button onClick={onClose} className="absolute top-4 right-4 z-10 p-2 bg-black/20 hover:bg-black/40 rounded-full text-white/70 hover:text-white transition">
           <XMarkIcon className="h-6 w-6" />
         </button>
 
-        {/* IMMAGINE */}
+        {/* --- COLONNA SINISTRA: IMMAGINE --- */}
         <div className="md:w-1/2 bg-[#FDFBF7] flex items-center justify-center p-8 relative">
            <div className="absolute top-6 left-6 z-10">
               {item.certified 
@@ -67,7 +76,7 @@ export default function WatchDetailsModal({ open, onClose, item, role, onList, o
            />
         </div>
 
-        {/* DETTAGLI & AZIONI */}
+        {/* --- COLONNA DESTRA: DATI & AZIONI --- */}
         <div className="md:w-1/2 p-8 flex flex-col justify-between relative">
           <div className="space-y-6">
             <div>
@@ -92,13 +101,13 @@ export default function WatchDetailsModal({ open, onClose, item, role, onList, o
             </div>
           </div>
 
-          {/* PULSANTI AZIONE */}
+          {/* --- PANNELLO AZIONI --- */}
           <div className="mt-8 pt-6 border-t border-white/10 space-y-4">
 
             {canManage && (
               <div className="space-y-4">
                 
-                {/* A. CERTIFICAZIONE (Solo Reseller) */}
+                {/* 1. AZIONE CERTIFICA (Solo Reseller) */}
                 {canCertify && (
                    <button
                      onClick={() => onCertify && onCertify(item)}
@@ -109,8 +118,8 @@ export default function WatchDetailsModal({ open, onClose, item, role, onList, o
                    </button>
                 )}
 
-                {/* B. VENDITA (Nuovo Listing) */}
-                {(!isListed && (role === 'producer' || (role === 'reseller' && item.certified))) && (
+                {/* 2. AZIONE VENDITA (Nuovo Listing) */}
+                {canList && (
                   <div className="bg-[#f2e9d0] p-4 rounded-xl shadow-inner border border-[#D4AF37]/30">
                     <label className="block text-[#4A0404] text-xs font-bold uppercase tracking-widest mb-2">
                       Imposta Prezzo (LUX)
@@ -136,18 +145,17 @@ export default function WatchDetailsModal({ open, onClose, item, role, onList, o
                   </div>
                 )}
                 
-                {/* Warning per Reseller non certificato */}
+                {/* Feedback Errore: Reseller prova a vendere non certificato */}
                 {(!isListed && role === 'reseller' && !item.certified) && (
-                   <div className="text-center text-[#D4AF37] text-xs italic bg-black/20 p-2 rounded-lg">
-                      ⚠️ Devi certificare l'orologio prima di poterlo vendere.
+                   <div className="text-center text-[#D4AF37] text-xs italic bg-black/20 p-2 rounded-lg border border-[#D4AF37]/30">
+                      ⚠️ Policy: Devi certificare l'orologio prima di poterlo vendere nel mercato secondario.
                    </div>
                 )}
 
-                {/* C. GESTIONE LISTING ESISTENTE (Update Price + Cancel) */}
+                {/* 3. GESTIONE OGGETTO IN VENDITA (Update/Cancel) */}
                 {isListed && (
                   <div className="bg-black/20 p-4 rounded-xl border border-white/10 space-y-3">
-                    
-                    {/* Update Price Input */}
+                    {/* Update Price */}
                     <div>
                         <label className="block text-white/50 text-[10px] uppercase font-bold tracking-widest mb-1">
                             Modifica Prezzo
@@ -158,14 +166,13 @@ export default function WatchDetailsModal({ open, onClose, item, role, onList, o
                                 min="0"
                                 placeholder="New Price"
                                 value={updatePriceValue}
-                                onKeyDown={(e) => { if (e.key === "-" || e.key === "e") e.preventDefault(); }}
                                 onChange={(e) => { if (e.target.value === "" || parseFloat(e.target.value) >= 0) setUpdatePriceValue(e.target.value); }}
                                 className="w-full bg-black/40 text-white font-bold p-2 rounded-lg border border-white/10 focus:outline-none focus:border-[#D4AF37]"
                             />
                             <button
                                 onClick={() => onUpdatePrice && onUpdatePrice(item, updatePriceValue)}
                                 disabled={!updatePriceValue || busy}
-                                className="px-4 bg-[#D4AF37]/20 hover:bg-[#D4AF37] text-[#D4AF37] hover:text-[#4A0404] font-bold rounded-lg border border-[#D4AF37] transition disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-[#D4AF37]"
+                                className="px-4 bg-[#D4AF37]/20 hover:bg-[#D4AF37] text-[#D4AF37] hover:text-[#4A0404] font-bold rounded-lg border border-[#D4AF37] transition disabled:opacity-30"
                             >
                                 <CurrencyDollarIcon className="h-5 w-5" />
                             </button>
@@ -174,7 +181,7 @@ export default function WatchDetailsModal({ open, onClose, item, role, onList, o
 
                     <div className="w-full h-px bg-white/10 my-2"></div>
 
-                    {/* Cancel Button */}
+                    {/* Cancel Listing */}
                     <button
                       onClick={() => onCancel && onCancel(item)}
                       disabled={busy}
@@ -187,7 +194,7 @@ export default function WatchDetailsModal({ open, onClose, item, role, onList, o
               </div>
             )}
 
-            {/* D. COMPRA (Se non sono il proprietario) */}
+            {/* 4. AZIONE ACQUISTO (Se non sono il proprietario) */}
             {!canManage && isListed && (
               <button
                 onClick={() => onBuy && onBuy(item)}
@@ -198,9 +205,6 @@ export default function WatchDetailsModal({ open, onClose, item, role, onList, o
               </button>
             )}
 
-            <div className="flex justify-end md:hidden">
-                <button onClick={onClose} className="text-white/50 text-sm hover:text-white">Close</button>
-            </div>
           </div>
         </div>
       </div>

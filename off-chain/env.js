@@ -7,12 +7,14 @@ export const env = {
   PORT: 3001,
   FRONTEND_ORIGIN: "http://localhost:5173",
 
-  // --- FIREFLY URLs (Aggiunti dal vecchio .env) ---
+  // --- FIREFLY URLs  ---
   FF_PRODUCER_BASE: "http://127.0.0.1:5000/api/v1/namespaces/default",
   FF_RESELLER_BASE: "http://127.0.0.1:5001/api/v1/namespaces/default",
   FF_CONSUMER_BASE: "http://127.0.0.1:5002/api/v1/namespaces/default",
 
   // --- POLICY ---
-  JWT_TTL: "1h",
-  NONCE_TTL_MS: 5 * 60 * 1000, // 5 minuti
+  ACCESS_TTL: "15m",
+  REFRESH_TTL: "14d",
+
+  NONCE_TTL_MS: 5 * 60 * 1000,
 };

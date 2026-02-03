@@ -9,9 +9,18 @@ export default function App() {
   return (
     <BrowserRouter>
       <Routes>
+        {/* Rotta Pubblica: Login */}
         <Route path="/login" element={<Login />} />
+        
+        {/* Redirect Root -> Market (UX: Landing page predefinita) */}
         <Route path="/" element={<Navigate to="/market" replace />} />
 
+        {/* ROTTE PROTETTE 
+           Queste pagine sono avvolte da 'ProtectedRoute'.
+           Se l'utente non ha un cookie JWT valido o non ha connesso il wallet,
+           viene reindirizzato forzatamente al Login.
+        */}
+        
         <Route
           path="/market"
           element={
@@ -29,6 +38,8 @@ export default function App() {
             </ProtectedRoute>
           }
         />
+        
+        {/* Catch-all: Qualsiasi URL sconosciuto porta al Market */}
         <Route path="*" element={<Navigate to="/market" replace />} />
       </Routes>
     </BrowserRouter>

@@ -1,5 +1,7 @@
 // frontend/src/lib/formatters.js
-// SOLO INTERI: 1 LUX = 10^18 Wei
+// Gestione precisione numerica per Blockchain (EVM).
+// Utilizzo di BigInt per evitare errori di virgola mobile (es. 0.1 + 0.2 != 0.3) tipici di JS.
+// 1 LUX = 10^18 Wei
 
 const DECIMALS = 10n ** 18n;
 
@@ -8,7 +10,8 @@ function isUnsignedIntegerString(s) {
 }
 
 /**
- * Wei -> LUX (intero, string)
+ * Wei -> LUX (Visualizzazione)
+ * Converte da intero on-chain (BigInt) a stringa leggibile per la UI.
  */
 export function formatLux(weiValue) {
   try {
@@ -24,9 +27,9 @@ export function formatLux(weiValue) {
 }
 
 /**
- * LUX (intero) -> Wei (string)
- * Qui conviene essere “strict”: se input non valido, lancia.
- * Così intercetti subito prezzo errato prima della invoke.
+ * LUX -> Wei (Input Transazione)
+ * Converte input utente in formato raw per lo Smart Contract.
+ * Strict Mode: Rifiuta decimali per semplificare la logica di business on-chain.
  */
 export function parseLux(luxValue) {
   const s = String(luxValue ?? "").trim();
@@ -45,21 +48,27 @@ export function shortAddr(address) {
   return `${s.slice(0, 6)}…${s.slice(-4)}`;
 }
 
+/**
+ * Error Mapping: Translation Layer.
+ * Traduce i "revert reasons" criptici dello Smart Contract (es. "0xe450d38")
+ * in messaggi utente comprensibili in linguaggio naturale.
+ */
 export function formatError(error, context = "GENERAL") {
   if (!error) return "Errore sconosciuto";
-  // Convertiamo in stringa e lowercase per matching sicuro
   const msg = (error.message || String(error)).toLowerCase();
 
-  // --- ERRORI DI SISTEMA / RETE ---
+  // --- ERRORI DI SISTEMA (Pausable / Emergency Stop) ---
   if (msg.includes("paused") || msg.includes("emergency")) {
     if (context === "MARKET") return "MERCATO SOSPESO: acquisto/vendita/prelievo temporaneamente bloccati.";
     if (context === "FACTORY") return "PRODUZIONE SOSPESA: minting/certificazioni non disponibili.";
     return "SISTEMA IN MANUTENZIONE: operazioni temporaneamente sospese.";
   }
+  
+  // --- ERRORI UTENTE / WALLET ---
   if (msg.includes("user denied") || msg.includes("rejected")) return "Operazione annullata dall'utente.";
   if (msg.includes("insufficient funds") || msg.includes("0xe450d38")) return "SALDO INSUFFICIENTE: LUX non sufficienti.";
   
-  // --- ERRORI SPECIFICI WATCHMARKET / NFT ---
+  // --- ERRORI DI DOMINIO (Business Logic) ---
   if (msg.includes("market not approved")) return "APPROVAZIONE MANCANTE: Devi approvare il Market prima di mettere in vendita.";
   if (msg.includes("only active reseller")) return "OPERAZIONE NEGATA: Solo i Reseller Autorizzati possono eseguire questa operazione.";
   if (msg.includes("seller disabled")) return "ACQUISTO NEGATO: Stai provando ad acquistare da un Reseller non autorizzato.";
@@ -68,6 +77,5 @@ export function formatError(error, context = "GENERAL") {
   if (msg.includes("already listed")) return "GIÀ IN VENDITA: Questo orologio è già listato.";
   if (msg.includes("only certified")) return "NON CERTIFICATO: Devi certificare l'orologio prima di venderlo.";
   
-  // Fallback generico
   return error.message || String(error);
 }

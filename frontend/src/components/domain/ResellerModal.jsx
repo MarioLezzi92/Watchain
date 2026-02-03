@@ -4,20 +4,21 @@ import { FF, FF_BASE } from "../../lib/api";
 import { formatError } from "../../lib/formatters"; 
 import { useWallet } from "../../context/WalletContext";  
 
-const formatShortAddress = (addr) => {
-  if (!addr) return "...";
-  return `${addr.substring(0, 6)}...${addr.substring(addr.length - 4)}`;
-};
+const formatShortAddress = (addr) => addr ? `${addr.substring(0, 6)}...${addr.substring(addr.length - 4)}` : "...";
 
 export default function ResellerModal({ isOpen, onClose }) {
-  // Stato locale per l'indirizzo scoperto dinamicamente
+  // Stato locale
   const [targetReseller, setTargetReseller] = useState(null);
   const [currentStatus, setCurrentStatus] = useState(null); 
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
   const [searching, setSearching] = useState(false);
+  
   const { address } = useWallet();
   
+  // --- IDENTITY DISCOVERY ---
+  // All'apertura del modale, cerchiamo automaticamente l'identità "ResellerOrg" su FireFly.
+  // Questo evita di dover hardcodare l'indirizzo del Reseller nel codice.
   useEffect(() => {
     if (isOpen) {
       setMsg("");
@@ -27,13 +28,14 @@ export default function ResellerModal({ isOpen, onClose }) {
 
       const discover = async () => {
         try {
+            // Risoluzione Nome Org -> Ethereum Address
             const addr = await FF.directory.resolveIdentityAddress("ResellerOrg");
             
             if (addr) {
                 setTargetReseller(addr);
-                checkContractStatus(addr);
+                checkContractStatus(addr); // Verifica permessi attuali
             } else {
-                setMsg("Nessuna identità 'Reseller' trovata su FireFly.");
+                setMsg("Nessuna identità 'ResellerOrg' trovata su FireFly.");
             }
         } catch (e) {
             console.error(e);
@@ -46,6 +48,7 @@ export default function ResellerModal({ isOpen, onClose }) {
     }
   }, [isOpen]);
 
+  // Controlla lo stato On-Chain (is active reseller?)
   const checkContractStatus = async (addr) => {
     try {
       const roleUrl = FF_BASE.producer;
@@ -57,22 +60,23 @@ export default function ResellerModal({ isOpen, onClose }) {
     }
   };
 
+  // Toggle Stato (Admin Action)
   const handleToggleStatus = async () => {
-    
     if (!targetReseller || currentStatus === null) return;
     setBusy(true);
     setMsg("Attendere transazione...");
 
     try {
       const roleUrl = FF_BASE.producer;
-      const newState = !currentStatus; 
+      const newState = !currentStatus; // Inverte stato
       
+      // Invocazione funzione setReseller(address, bool)
       await FF.watchNft.invoke.setReseller(roleUrl, {
         who: targetReseller,
         enabled: newState
-      }, { key: address});
+      }, { key: address });
 
-      setMsg(`Operazione riuscita!`);
+      setMsg(`Operazione riuscita! Stato aggiornato.`);
       setCurrentStatus(newState); 
     } catch (err) {
       setMsg(`❌ ${formatError(err, "FACTORY")}`);
@@ -99,13 +103,13 @@ export default function ResellerModal({ isOpen, onClose }) {
           </div>
           <h2 className="text-2xl font-serif font-bold mb-2">Gestione Reseller</h2>
           
-          {/* Zona Indirizzo (Dinamico) */}
+          {/* Card Indirizzo */}
           <div className="flex flex-col items-center justify-center w-full mb-8">
             <div className={`border border-[#D4AF37]/30 px-6 py-3 rounded-full font-mono text-lg tracking-widest shadow-inner flex items-center gap-2 ${searching ? 'animate-pulse bg-white/5 text-transparent' : 'bg-black/40 text-[#D4AF37]'}`}>
                 {searching ? "0x0000...0000" : formatShortAddress(targetReseller)}
             </div>
              <div className="text-[10px] text-white/30 mt-2 uppercase tracking-widest">
-                {searching ? "Ricerca su FireFly..." : "Indirizzo Wallet"}
+                {searching ? "Ricerca Identity su FireFly..." : "Indirizzo Wallet (Risolto)"}
             </div>
           </div>
 
@@ -117,10 +121,9 @@ export default function ResellerModal({ isOpen, onClose }) {
                 <div className="flex items-center gap-3">
                   {isLoading ? <QuestionMarkCircleIcon className="h-6 w-6 text-gray-400 animate-pulse" /> : isAuthorized ? <ShieldCheckIcon className="h-6 w-6 text-green-500" /> : <ShieldExclamationIcon className="h-6 w-6 text-red-500" />}
                   <div className="text-left">
-                    <div className="text-xs font-bold uppercase tracking-tighter opacity-50">Stato Reseller</div>
+                    <div className="text-xs font-bold uppercase tracking-tighter opacity-50">Stato Attuale</div>
                     <div className="text-sm font-bold flex items-center gap-2">
                       {isLoading ? "VERIFICA..." : (isAuthorized ? "AUTORIZZATO" : "NON AUTORIZZATO")}
-                      {!isLoading && isAuthorized && <span className="relative flex h-2 w-2"><span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span><span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span></span>}
                     </div>
                   </div>
                 </div>

@@ -1,6 +1,10 @@
 import React from "react";
 import { CheckCircleIcon } from "@heroicons/react/24/outline";
 
+/**
+ * Modale Successo.
+ * Fornisce feedback immediato dopo una transazione confermata su Blockchain.
+ */
 export default function SuccessModal({ isOpen, onClose, message }) {
   if (!isOpen) return null;
 
@@ -9,7 +13,6 @@ export default function SuccessModal({ isOpen, onClose, message }) {
       
       <div className="rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden transform transition-all scale-100 border border-[#D4AF37] ring-4 ring-[#1A472A]/30">
         
-       
         <div className="bg-[#1A472A] px-6 py-4 border-b border-[#D4AF37]/50 flex items-center justify-center relative z-10 shadow-md">
           <div className="flex items-center gap-2 text-[#D4AF37]">
             <CheckCircleIcon className="h-6 w-6" />
@@ -18,14 +21,12 @@ export default function SuccessModal({ isOpen, onClose, message }) {
             </h3>
           </div>
         </div>
-
         
         <div className="p-8 text-center bg-[#f2e9d0]">
           <p className="text-[#1A472A] text-lg font-medium leading-relaxed font-serif">
             {message}
           </p>
         </div>
-
        
         <div className="px-6 py-4 bg-[#1A472A] flex justify-center border-t border-[#D4AF37]/50 relative z-10">
           <button

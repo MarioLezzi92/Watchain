@@ -3,7 +3,9 @@ import AppShell from "../app/AppShell";
 import { useWallet } from "../context/WalletContext";
 import { useSystem } from "../context/SystemContext";
 import { formatError, formatLux, parseLux } from "../lib/formatters"; 
+import { FF, FF_BASE } from "../lib/api"; 
 
+// Componenti UI
 import WatchCard from "../components/domain/WatchCard";
 import WatchDetailsModal from "../components/domain/WatchDetailsModal";
 import SecurityModal from "../components/domain/SecurityModal";
@@ -11,9 +13,6 @@ import ResellerModal from "../components/domain/ResellerModal";
 import ConfirmModal from "../components/ui/ConfirmModal";
 import SuccessModal from "../components/ui/SuccessModal";
 import ErrorModal from "../components/ui/ErrorModal";
-
-import { FF } from "../lib/api"; 
-import { FF_BASE } from "../lib/firefly"; 
 
 // Icons
 import {
@@ -34,16 +33,16 @@ const getRoleBaseUrl = (role) => {
 const ZERO_ADDR = "0x0000000000000000000000000000000000000000";
 
 export default function MePage() {
-  // 1. DATI GLOBALI 
+  // --- STATO GLOBALE ---
   const { address, role, balance, pendingBalance, refreshWallet, loading: walletLoading } = useWallet();
   const { marketPaused, factoryPaused, refreshTrigger, forceRefresh } = useSystem();
   
-  // 2. STATO LOCALE
+  // --- STATO LOCALE ---
   const [inventory, setInventory] = useState([]);
   const [loadingInventory, setLoadingInventory] = useState(false);
   const [busy, setBusy] = useState(false);
 
-  // Stato Modali
+  // Gestione Modali
   const [selected, setSelected] = useState(null);
   const [modals, setModals] = useState({ 
     detail: false, 
@@ -54,7 +53,15 @@ export default function MePage() {
     error: null    
   });
 
-  // --- LOGICA INVENTARIO (AGGIORNATA PER ESCROW) ---
+  /**
+   * LOGICA INVENTARIO IBRIDO (Wallet + Escrow)
+   * Problema: Quando un orologio è in vendita, l'NFT viene trasferito al contratto Market (Escrow).
+   * Risultato: Non appare più nel "balanceOf" dell'utente.
+   * Soluzione: 
+   * 1. Leggiamo il saldo wallet (NFT "in tasca").
+   * 2. Leggiamo gli eventi (Event Sourcing) per trovare gli NFT "in vetrina" di cui siamo Seller.
+   * 3. Uniamo le due liste.
+   */
   const refreshInventory = useCallback(async (silent = true) => {
     if (!address) return;
     if (!silent) setLoadingInventory(true);
@@ -63,7 +70,7 @@ export default function MePage() {
       const roleUrl = getRoleBaseUrl(role);
       const myAddr = address.toLowerCase();
 
-      // A. OROLOGI NEL WALLET (Non in vendita)
+      // FONTE A: Wallet (Token Balances)
       const rawBal = await FF.tokens.balances(FF_BASE.producer, {
         pool: "watchnft",
         key: address,
@@ -78,9 +85,10 @@ export default function MePage() {
         })
         .map(r => String(r.tokenIndex ?? r.tokenId ?? ""));
 
+      // FONTE B: Escrow (Ricostruzione da Eventi)
       const evRaw = await FF.subscriptions.eventsByName(FF_BASE.producer, "watchain_webhook", { limit: 500 });
       let events = Array.isArray(evRaw) ? evRaw : (evRaw.items || evRaw.results || []);
-      events = events.reverse(); // Ordine cronologico per ricostruire stato
+      events = events.reverse(); 
 
       const escrowIds = new Set();
       
@@ -94,22 +102,22 @@ export default function MePage() {
         if (name === "listed") {
             const seller = String(out.seller || "").toLowerCase();
             if (seller === myAddr) {
-                escrowIds.add(tokenId);
+                escrowIds.add(tokenId); // È mio, ma è nel market
             }
         } else if (name === "canceled" || name === "purchased") {
-            // Se venduto o cancellato, non è più in escrow a mio nome
-            escrowIds.delete(tokenId);
+            escrowIds.delete(tokenId); // Non è più in escrow a mio nome
         }
       }
 
+      // Unione e Deduplicazione
       const allIds = Array.from(new Set([...walletIds, ...escrowIds]));
 
       const myWatches = [];
 
+      // Arricchimento Dati (Data Enrichment)
       for (const tokenId of allIds) {
         if (!tokenId) continue;
 
-        // Fetch dati on-chain
         const [listingRes, certRes] = await Promise.all([
           FF.watchMarket.query.listings(roleUrl, { "": tokenId }),
           FF.watchNft.query.certified(roleUrl, { tokenId }),
@@ -121,7 +129,6 @@ export default function MePage() {
         let sellerAddr = null;
         let priceLux = null;
 
-        // Verifica se è effettivamente listato
         if (listing?.seller && String(listing.seller) !== ZERO_ADDR) {
           sellerAddr = String(listing.seller).toLowerCase();
           priceLux = formatLux(listing.price);
@@ -130,6 +137,7 @@ export default function MePage() {
         const isMineInWallet = walletIds.includes(tokenId);
         const isMineInEscrow = sellerAddr === myAddr;
 
+        // Visualizza solo se è mio (o nel wallet o in vendita da me)
         if (isMineInWallet || isMineInEscrow) {
             myWatches.push({
               tokenId,
@@ -155,12 +163,14 @@ export default function MePage() {
     }
   }, [address, role]);
 
+
   // --- EFFETTI ---
   useEffect(() => {
     refreshInventory(false);
     refreshWallet(); 
   }, [refreshInventory, refreshWallet]);
 
+  // Aggiornamento Real-Time (Socket)
   useEffect(() => {
     if (refreshTrigger > 0) {
       refreshInventory(true);
@@ -168,14 +178,21 @@ export default function MePage() {
     }
   }, [refreshTrigger, refreshInventory, refreshWallet]);
 
-  // --- HELPERS MODALI ---
+  // --- HELPERS UI ---
   const closeModals = () => setModals(p => ({ ...p, detail: false, confirm: null, success: null, error: null }));
   const openConfirm = (title, message, onConfirm) => setModals(p => ({ ...p, confirm: { title, message, onConfirm } }));
   const openSuccess = (msg) => setModals(p => ({ ...p, success: msg, detail: false, confirm: null }));
   const openError = (msg) => setModals(p => ({ ...p, error: msg, confirm: null }));
   const handleError = (e, context = "GENERAL") => openError(formatError(e, context));
 
-  // --- APPROVAL LOGIC ---
+
+  // --- AZIONI DI BUSINESS ---
+
+  /**
+   * Helper: APPROVAL FOR ALL
+   * Prima di mettere in vendita un NFT, il contratto Market deve essere approvato.
+   * Controlla se l'approvazione esiste; se no, lancia la transazione di `setApprovalForAll`.
+   */
   const ensureMarketApprovalThen = async (actionFn) => {
     const roleUrl = getRoleBaseUrl(role);
     const marketAddr = await FF.directory.resolveApi(FF.apis.watchMarket);
@@ -202,8 +219,8 @@ export default function MePage() {
             }, { confirm: true, key : address }); 
 
             await new Promise(r => setTimeout(r, 1000));
-            closeModals(); // Chiudi modale conferma
-            await actionFn(); // Procedi con l'azione
+            closeModals();
+            await actionFn(); // Esegui l'azione originale (List)
           } catch (e) {
             handleError(e);
           } finally {
@@ -216,11 +233,12 @@ export default function MePage() {
     }
   };
 
-
+  // MINT (Solo Producer)
   const handleMint = async () => {
       setBusy(true);
       try {
         const roleUrl = getRoleBaseUrl(role);
+        // Transazione sicura via Proxy
         await FF.watchNft.invoke.manufacture(roleUrl,{}, { key: address }); 
         openSuccess("Orologio coniato con successo!");
         refreshInventory(true);
@@ -231,6 +249,7 @@ export default function MePage() {
       }
   };
 
+  // LISTING (Producer o Reseller)
   const handleList = async (item, priceLuxInput) => {
     const roleUrl = getRoleBaseUrl(role);
     const priceInWei = parseLux(priceLuxInput);
@@ -238,6 +257,7 @@ export default function MePage() {
     const runListingLogic = async () => {
       setBusy(true);
       try {          
+          // Polimorfismo: sceglie la funzione corretta in base al ruolo
           const method = (role === "producer") ? "listPrimary" : "listSecondary";
           
           await FF.watchMarket.invoke[method](roleUrl, {
@@ -256,11 +276,11 @@ export default function MePage() {
       }
     };
     
-    // Serve approvazione solo se NON è già nel market (ma handleList è per non-listati)
+    // Richiede approvazione preventiva
     ensureMarketApprovalThen(runListingLogic);
   };
 
-  // Aggiornamento Prezzo 
+  // AGGIORNAMENTO PREZZO
   const handleUpdatePrice = async (item, newPriceLux) => {
       setBusy(true);
       try {
@@ -281,6 +301,7 @@ export default function MePage() {
       }
   };
 
+  // CERTIFICAZIONE (Solo Reseller)
   const handleCertify = async (item) => {
       setBusy(true);
       try {
@@ -295,6 +316,7 @@ export default function MePage() {
       }
   };
    
+  // CANCELLAZIONE LISTING
   const handleCancel = async (item) => {
     setBusy(true);
     try {
@@ -309,6 +331,7 @@ export default function MePage() {
     }
   };
 
+  // PRELIEVO FONDI (Pull Pattern)
   const handleWithdraw = async () => {
       setBusy(true);
       try {
@@ -323,12 +346,16 @@ export default function MePage() {
       }
   };
 
+  // ADMIN TOOLS (Circuit Breaker)
   const handleToggleSystem = async (system, currentStatus) => {
     setBusy(true);
     try {
       const roleUrl = getRoleBaseUrl(role);
       const targetApi = (system === 'market') ? FF.watchMarket : FF.watchNft; 
+      
+      // Toggle stato di emergenza (Paused/Unpaused)
       await targetApi.invoke.setEmergencyStop(roleUrl, { status: !currentStatus }, { key: address }); 
+      
       forceRefresh();
       openSuccess(`Sistema ${system === 'market' ? 'Mercato' : 'Factory'} aggiornato!`);
       closeModals();
@@ -348,6 +375,7 @@ export default function MePage() {
         
         {/* SIDEBAR PROFILO */}
         <div className="lg:col-span-4 space-y-6">
+          {/* Card Profilo */}
           <div className="rounded-3xl bg-[#4A0404] text-[#FDFBF7] p-8 shadow-xl sticky top-28 border border-[#5e0a0a]">
             <div className="text-3xl font-serif font-bold tracking-wide mb-6">Il tuo Profilo</div>
             
@@ -370,6 +398,7 @@ export default function MePage() {
                   <div className="text-[#D4AF37] text-2xl font-bold">{balance} LUX</div>
                </div>
 
+               {/* Sezione Prelievi (Visibile solo se ci sono fondi pendenti) */}
                {canWithdraw && (
                <div className="bg-[#1A472A]/40 p-4 rounded-xl border border-[#D4AF37]/50 animate-pulse mt-4">
                   <div className="text-[#D4AF37] text-xs uppercase tracking-wider font-bold mb-1 flex items-center gap-1">
@@ -389,6 +418,7 @@ export default function MePage() {
                )}
             </div>
 
+            {/* Pannello Admin (Visibile solo al Producer) */}
             {role === "producer" && (
                 <div className="border-t border-white/10 pt-6 space-y-3">
                     <div className="text-[#D4AF37] text-xs font-bold uppercase tracking-widest mb-3 flex items-center gap-2 opacity-80">
@@ -459,7 +489,7 @@ export default function MePage() {
         item={selected} 
         role={role} 
         busy={busy}
-        // Funzioni collegate:
+        // Binding delle azioni con conferma
         onList={(item, p) => openConfirm("Metti in Vendita", `Prezzo: ${p} LUX. Confermi?`, () => handleList(item, p))}
         onUpdatePrice={(item, p) => openConfirm("Modifica Prezzo", `Nuovo prezzo: ${p} LUX. Confermi?`, () => handleUpdatePrice(item, p))}
         onCancel={(item) => openConfirm("Ritira Orologio", "Vuoi annullare la vendita e ritirare l'orologio dal Mercato?", () => handleCancel(item))}

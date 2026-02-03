@@ -4,35 +4,36 @@ import { FF, FF_BASE } from "../lib/api";
 
 const WalletContext = createContext();
 
-// Helper per gestire i BigInt
+// Helper per gestire conversioni sicure BigInt
 const safeBigInt = (val) => {
-  try {
-    return val != null ? BigInt(val) : 0n;
-  } catch {
-    return 0n;
-  }
+  try { return val != null ? BigInt(val) : 0n; } catch { return 0n; }
 };
 
 export function WalletProvider({ children }) {
+  // Stato Identità
   const [address, setAddress] = useState(null);
   const [role, setRole] = useState(null);
 
-  // Nuovi flag coerenti coi contratti:
-  // - isReseller = ruolo permanente (mapping reseller)
-  // - isActiveReseller = abilitazione (mapping activeReseller)
+  // Stato Permessi Granulari (Role Flags)
   const [isReseller, setIsReseller] = useState(false);
   const [isActiveReseller, setIsActiveReseller] = useState(false);
 
+  // Stato Economico
   const [balance, setBalance] = useState("0");
-  const [pendingBalance, setPendingBalance] = useState("0");
-  const [inventory, setInventory] = useState([]);
+  const [pendingBalance, setPendingBalance] = useState("0"); // Crediti escrow da ritirare
+  const [inventory, setInventory] = useState([]); // (Legacy, ora gestito in MePage)
   const [loading, setLoading] = useState(true);
 
-  // --- 1. SYNC DATI ---
+  /**
+   * SINCRONIZZAZIONE WALLET (Hydration)
+   * Recupera lo stato attuale dell'utente dalla Blockchain.
+   * Viene chiamato al caricamento e ad ogni segnale di refresh.
+   */
   const refreshWallet = useCallback(async () => {
     const storedAddress = getAddress();
     const storedRole = getRole();
 
+    // Check Sessione Locale
     if (!storedAddress || storedAddress === "undefined" || !storedRole) {
       setAddress(null);
       setRole(null);
@@ -51,13 +52,15 @@ export function WalletProvider({ children }) {
     const roleUrl = FF_BASE[storedRole] || FF_BASE.consumer;
 
     try {
-      // 1) Dati economici (dal nodo del ruolo)
+      // 1. DATI ECONOMICI (Balance & Credits)
+      // Usiamo Promise.allSettled per resilienza: se un nodo fallisce, l'altro dato arriva comunque.
       const [balRes, credRes] = await Promise.allSettled([
         FF.luxuryCoin.query.balanceOf(roleUrl, { account: storedAddress }),
         FF.watchMarket.query.creditsOf(roleUrl, { payee: storedAddress }),
       ]);
 
       if (balRes.status === "fulfilled") {
+        // Conversione Wei -> Lux per UI
         const lux = (safeBigInt(balRes.value.output) / 10n ** 18n).toString();
         setBalance(lux);
       } else {
@@ -70,8 +73,7 @@ export function WalletProvider({ children }) {
         setPendingBalance("0");
       }
 
-      // 2) Flags on-chain (sempre lettura da producer)
-      // serve per distinguere "reseller permanente" vs "activeReseller"
+      // 2. VERIFICA RUOLI ON-CHAIN (Producer Node = Source of Truth)
       const readNode = FF_BASE.producer;
 
       const [factoryRes, resellerRes, activeResellerRes] = await Promise.allSettled([
@@ -80,33 +82,28 @@ export function WalletProvider({ children }) {
         FF.watchNft.query.activeReseller(readNode, { "": storedAddress }),
       ]);
 
-      const factoryAddr =
-        factoryRes.status === "fulfilled"
+      const factoryAddr = factoryRes.status === "fulfilled"
           ? String(factoryRes.value.output || factoryRes.value || "").toLowerCase()
           : "";
 
       const myAddr = String(storedAddress).toLowerCase();
       const amIProducer = !!factoryAddr && myAddr === factoryAddr;
 
-      const permReseller =
-        resellerRes.status === "fulfilled"
+      const permReseller = resellerRes.status === "fulfilled"
           ? resellerRes.value.output === true || String(resellerRes.value.output) === "true"
           : false;
 
-      const activeReseller =
-        activeResellerRes.status === "fulfilled"
+      const activeReseller = activeResellerRes.status === "fulfilled"
           ? activeResellerRes.value.output === true || String(activeResellerRes.value.output) === "true"
           : false;
 
-      // Producer non è reseller
+      // Aggiornamento Flag
       setIsReseller(!amIProducer && permReseller);
       setIsActiveReseller(!amIProducer && activeReseller);
 
-      // WalletContext non deve più calcolare inventory (lo fa MePage)
-      setInventory([]);
     } catch (error) {
       console.error("Critical Wallet Sync Error:", error);
-      // fallback sicuro
+      // Fallback sicuro in caso di errore rete
       setIsReseller(false);
       setIsActiveReseller(false);
     } finally {
@@ -114,21 +111,19 @@ export function WalletProvider({ children }) {
     }
   }, []);
 
-  // Sync iniziale
+  // Initial Mount Sync
   useEffect(() => {
     refreshWallet();
   }, [refreshWallet]);
 
-  // Sync wallet quando cambia la sessione (login/logout/401)
+  // Listener cambio sessione (Login/Logout da altri tab o componenti)
   useEffect(() => {
     const onAuthChange = async () => {
       setLoading(true);
       await refreshWallet();
-
-      const storedAddr = getAddress();
-      const storedRole = getRole();
-      const noSession = !storedAddr || storedAddr === "undefined" || !storedRole;
-
+      
+      // Controllo consistenza: se storage vuoto ma siamo su pagina protetta -> redirect login
+      const noSession = !getAddress() || !getRole();
       if (noSession && window.location.pathname !== "/login") {
         window.location.href = "/login";
       }
@@ -138,48 +133,38 @@ export function WalletProvider({ children }) {
     return () => window.removeEventListener(AUTH_EVENT, onAuthChange);
   }, [refreshWallet]);
 
-  // --- 2. SECURITY: AUTO-LOGOUT SU CAMBIO ACCOUNT ---
+  /**
+   * SECURITY: ACCOUNT CHANGE DETECTION
+   * Se l'utente cambia account su MetaMask mentre è loggato con un altro address,
+   * eseguiamo un logout forzato per prevenire inconsistenze o firme non valide.
+   */
   useEffect(() => {
     if (!window.ethereum) return;
 
-    // A. CONTROLLO ALL'AVVIO
-    window.ethereum
-      .request({ method: "eth_accounts" })
+    // A. Controllo preventivo all'avvio
+    window.ethereum.request({ method: "eth_accounts" })
       .then((accounts) => {
         const storedAddr = getAddress();
-
-        if (
-          storedAddr &&
-          (accounts.length === 0 || accounts[0].toLowerCase() !== storedAddr.toLowerCase())
-        ) {
-          console.warn("Sessione non valida rilevata all'avvio. Logout automatico.");
+        if (storedAddr && (accounts.length === 0 || accounts[0].toLowerCase() !== storedAddr.toLowerCase())) {
+          console.warn("[Security] Session mismatch detected on load. Logging out.");
           logout();
           setAddress(null);
-          setRole(null);
-          setIsReseller(false);
-          setIsActiveReseller(false);
-
-          if (window.location.pathname !== "/login") {
-            window.location.href = "/login";
-          }
+          if (window.location.pathname !== "/login") window.location.href = "/login";
         }
       })
       .catch(console.error);
 
-    // B. ASCOLTO CAMBIAMENTI
+    // B. Listener Eventi MetaMask
     const handleAccountsChanged = (accounts) => {
       const currentSessionAddr = getAddress();
-      if (
-        accounts.length === 0 ||
-        (currentSessionAddr && accounts[0].toLowerCase() !== currentSessionAddr.toLowerCase())
-      ) {
-        console.warn("Cambio account rilevato. Logout forzato.");
+      if (accounts.length === 0 || (currentSessionAddr && accounts[0].toLowerCase() !== currentSessionAddr.toLowerCase())) {
+        console.warn("[Security] Wallet changed. Forcing logout.");
         logout();
         window.location.href = "/login";
       }
     };
 
-    const handleChainChanged = () => window.location.reload();
+    const handleChainChanged = () => window.location.reload(); // Best practice EVM: reload on chain change
 
     window.ethereum.on("accountsChanged", handleAccountsChanged);
     window.ethereum.on("chainChanged", handleChainChanged);

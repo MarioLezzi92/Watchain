@@ -9,62 +9,67 @@ export default function Login() {
   const navigate = useNavigate();
   const { refreshWallet } = useWallet();
   const { forceRefresh } = useSystem();
+  
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
 
+  /**
+   * FLUSSO DI AUTENTICAZIONE IBRIDA
+   * 1. Identity (Off-Chain): Prova il possesso del wallet tramite firma crittografica (Metamask).
+   * 2. Authorization (On-Chain): Interroga lo Smart Contract per determinare i permessi (Ruolo).
+   */
   const onLogin = async () => {
     setErr("");
     setLoading(true);
+    
     try {
       if (!window.ethereum) throw new Error("MetaMask non trovato.");
 
-      // 1. Richiediamo l'account ATTIVO su MetaMask
+      // STEP 1: Connessione Wallet (Client-Side)
       const accounts = await window.ethereum.request({ method: "eth_requestAccounts" });
-
-      if (!accounts || accounts.length === 0) {
-        throw new Error("Nessun account selezionato.");
-      }
-
+      if (!accounts || accounts.length === 0) throw new Error("Nessun account selezionato.");
       const address = accounts[0];
 
-      // 2. Otteniamo il Nonce dal Backend
+      // STEP 2: Challenge Request (Off-Chain)
+      // Richiediamo un 'nonce' casuale al server per evitare Replay Attacks.
       const resNonce = await AuthAPI.nonce(address);
       const nonce = resNonce?.nonce;
       const message = resNonce?.message;
 
-      if (!nonce) throw new Error("Errore: Nonce non ricevuto.");
+      if (!nonce) throw new Error("Errore: Nonce non ricevuto dal backend.");
 
-      // 3. Firma con MetaMask
+      // STEP 3: Firma Crittografica (Off-Chain)
+      // L'utente firma il nonce con la sua chiave privata (senza esporla).
       const signature = await window.ethereum.request({
         method: "personal_sign",
         params: [message, address],
       });
 
-      // 4. Login Backend
+      // STEP 4: Verifica & Sessione (Off-Chain)
+      // Il backend verifica la firma e rilascia i cookie di sessione (JWT HttpOnly).
       const resLogin = await AuthAPI.login(address, signature);
-      if (!resLogin?.success) throw new Error("Login fallito.");
+      if (!resLogin?.success) throw new Error("Login fallito lato server.");
 
-      // --- 5. LOGICA DECENTRALIZZATA: Chiediamo il ruolo alla Blockchain ---
-      // Usiamo il nodo Producer come fonte pubblica di lettura
+      // STEP 5: Risoluzione Ruoli (On-Chain)
+      // Una volta autenticati, interroghiamo la Blockchain per capire "chi siamo" nel sistema.
+      // Usiamo il nodo Producer come "Oracolo di lettura" pubblico.
       const readNode = FF_BASE.producer;
 
       const [factoryRes, resellerPermRes, activeResellerRes] = await Promise.all([
+        // Chi è il Factory (Producer)?
         FF.watchNft.query.factory(readNode),
-        // reseller(address) = ruolo permanente
+        // Sono un Reseller registrato?
         FF.watchNft.query.reseller(readNode, { "": address }),
-        // activeReseller(address) = abilitazione operativa
+        // Sono un Reseller attivo?
         FF.watchNft.query.activeReseller(readNode, { "": address }),
       ]);
 
       const factoryAddr = String(factoryRes.output || "").toLowerCase();
       const myAddr = String(address).toLowerCase();
 
-      const isResellerPermanent =
-        resellerPermRes.output === true || String(resellerPermRes.output) === "true";
-
-      const isActiveReseller =
-        activeResellerRes.output === true || String(activeResellerRes.output) === "true";
-
+      const isResellerPermanent = resellerPermRes.output === true || String(resellerPermRes.output) === "true";
+      
+      // Determinazione Ruolo RBAC
       let blockchainRole = "consumer";
       if (myAddr === factoryAddr) {
         blockchainRole = "producer";
@@ -72,17 +77,17 @@ export default function Login() {
         blockchainRole = "reseller";
       }
 
-      console.log(
-        `Ruolo assegnato: ${blockchainRole} (ResellerPerm: ${isResellerPermanent}, Active: ${isActiveReseller})`
-      );
+      console.log(`[Auth] Ruolo On-Chain rilevato: ${blockchainRole}`);
 
-      // 6. Salvataggio Sessione con il ruolo reale
+      // STEP 6: Persistenza Stato UI
+      // Salviamo ruolo e indirizzo nel localStorage (solo per UI, la sicurezza è nel Cookie)
       saveSession(address, blockchainRole);
 
-      // 7. Aggiornamento UI e redirect
+      // STEP 7: Inizializzazione App
       await refreshWallet();
       forceRefresh();
       navigate("/market");
+
     } catch (e) {
       console.error("Login Error:", e);
       if (e.code === 4001) {
@@ -100,21 +105,12 @@ export default function Login() {
       <div className="w-full max-w-lg bg-[#4A0404] text-[#f2e9d0] rounded-3xl shadow-2xl overflow-hidden relative border border-[#5e0a0a]">
         <div className="h-2 w-full bg-[#D4AF37]"></div>
         <div className="p-10 md:p-14 text-center">
+          
+          {/* Logo / Header */}
           <div className="mx-auto h-16 w-16 bg-[#D4AF37] rounded-full flex items-center justify-center mb-6 shadow-lg text-[#4A0404]">
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              fill="none"
-              viewBox="0 0 24 24"
-              strokeWidth={1.5}
-              stroke="currentColor"
-              className="w-8 h-8"
-            >
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-8 h-8">
               <path strokeLinecap="round" strokeLinejoin="round" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                d="M15.91 11.672a.375.375 0 010 .656l-5.603 3.113a.375.375 0 01-.557-.328V8.887c0-.286.307-.466.557-.327l5.603 3.112z"
-              />
+              <path strokeLinecap="round" strokeLinejoin="round" d="M15.91 11.672a.375.375 0 010 .656l-5.603 3.113a.375.375 0 01-.557-.328V8.887c0-.286.307-.466.557-.327l5.603 3.112z" />
             </svg>
           </div>
 
@@ -131,12 +127,14 @@ export default function Login() {
             Identity verification is handled automatically via JWT.
           </p>
 
+          {/* Error Feedback */}
           {err && (
             <div className="mb-6 rounded-xl border border-red-500/50 bg-red-900/30 p-4 text-red-200 text-sm animate-pulse">
               {err}
             </div>
           )}
 
+          {/* Action Button */}
           <button
             onClick={onLogin}
             disabled={loading}
@@ -147,14 +145,7 @@ export default function Login() {
             ) : (
               <>
                 <span>Connect MetaMask</span>
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  strokeWidth={2}
-                  stroke="currentColor"
-                  className="w-5 h-5"
-                >
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5">
                   <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3" />
                 </svg>
               </>
