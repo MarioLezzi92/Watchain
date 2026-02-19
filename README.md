@@ -12,7 +12,7 @@ DApp per la tracciabilità e la compravendita di orologi di lusso. Utilizza la b
 * `/contracts`: Codice sorgente degli Smart Contract in Solidity.
 * `/frontend`: Interfaccia utente React.
 * `/off-chain`: Backend Node.js per l'interazione con FireFly e l'aggiornamento UI in tempo reale.
-* `/scripts`: Script di utilità per il deploy.
+* `/scripts`: Script di utilità.
 
 ## Come avviare
 1. Clona la repository.
