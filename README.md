@@ -3,10 +3,10 @@
 DApp per la tracciabilità e la compravendita di orologi di lusso. Utilizza la blockchain per creare un "gemello digitale" (NFT) di ogni orologio, garantendone l'autenticità e gestendo la compravendita in totale sicurezza tramite Smart Contract.
 
 ## Tecnologie principali
-* **Smart Contracts:** Solidity (Standard ERC-721 per gli orologi, ERC-20 per la moneta di scambio).
-* **Infrastruttura:** Hyperledger FireFly (eseguito in ambiente Docker).
-* **Backend:** Node.js.
-* **Frontend:** React.js.
+* **Smart Contracts:** Solidity 
+* **Infrastruttura:** Hyperledger FireFly
+* **Backend:** Node.js
+* **Frontend:** React.js
 
 ## Struttura del progetto
 * `/contracts`: Codice sorgente degli Smart Contract in Solidity.
